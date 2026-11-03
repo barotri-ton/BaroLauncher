@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="service_description">Opens this home screen when you press Home, instead of Google TV\'s.</string>
+    <string name="service_description">Mở màn hình chính này khi bạn nhấn nút Home trên điều khiển.</string>
     <color name="night">#0B1026</color>
     <style name="HomeTheme" parent="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
         <item name="android:windowBackground">@color/night</item>

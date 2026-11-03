@@ -26,8 +26,10 @@ final class WatchNext {
 
     static final class Item {
         String pkg, title, poster, intentUri;
+        long programId = -1;
+        String episodeTitle;
         long position, duration, engaged;
-        /** Only for items remembered from Now Playing (no poster, no intent from the app). */
+        /** Additional metadata for items remembered from Now Playing. */
         String subtitle, mediaId, mediaUri;
         boolean recent;
     }
@@ -38,7 +40,7 @@ final class WatchNext {
      */
     static List<Item> merge(List<Item> offered, List<Item> played, Set<String> skip) {
         java.util.Map<String, Item> byKey = new java.util.LinkedHashMap<>();
-        if (offered != null) for (Item it : offered) byKey.put(key(it), it);
+        if (offered != null) for (Item it : offered) if (!skip.contains(it.pkg)) byKey.put(key(it), it);
         if (played != null) {
             for (Item it : played) {
                 if (skip.contains(it.pkg)) continue;
@@ -46,7 +48,8 @@ final class WatchNext {
                 if (have == null) {
                     byKey.put(key(it), it);
                 } else {
-                    if (have.position <= 0) have.position = it.position;
+                    if (have.poster == null || have.poster.isEmpty()) have.poster = it.poster;
+                    if (it.position >= 0 && (have.position < 0 || it.engaged > have.engaged)) have.position = it.position;
                     if (have.duration <= 0) have.duration = it.duration;
                     have.engaged = Math.max(have.engaged, it.engaged);
                 }
@@ -54,15 +57,17 @@ final class WatchNext {
         }
         List<Item> out = new ArrayList<>();
         for (Item it : byKey.values()) {
-            if (it.duration > 0 && it.position >= it.duration * 0.95) continue;
+            if (it.duration > 0 && it.position >= 0
+                    && (it.position < it.duration * 0.03 || it.position >= it.duration * 0.95)) continue;
             out.add(it);
         }
         Collections.sort(out, (a, b) -> Long.compare(b.engaged, a.engaged));
         return out.size() > MAX_ITEMS ? new ArrayList<>(out.subList(0, MAX_ITEMS)) : out;
     }
 
-    private static String key(Item it) {
-        return it.pkg + "|" + it.title.trim().toLowerCase(java.util.Locale.ROOT);
+    static String key(Item it) {
+        return it.pkg + "|" + it.title.trim().toLowerCase(java.util.Locale.ROOT)
+                + (it.episodeTitle == null || it.episodeTitle.isEmpty() ? "" : "|" + it.episodeTitle.trim().toLowerCase(java.util.Locale.ROOT));
     }
 
     private static final ExecutorService IO = Executors.newSingleThreadExecutor(r -> {
@@ -83,7 +88,9 @@ final class WatchNext {
                     TvContract.WatchNextPrograms.COLUMN_INTENT_URI,
                     TvContract.WatchNextPrograms.COLUMN_LAST_PLAYBACK_POSITION_MILLIS,
                     TvContract.WatchNextPrograms.COLUMN_DURATION_MILLIS,
-                    TvContract.WatchNextPrograms.COLUMN_LAST_ENGAGEMENT_TIME_UTC_MILLIS}, null, null, null)) {
+                    TvContract.WatchNextPrograms.COLUMN_LAST_ENGAGEMENT_TIME_UTC_MILLIS,
+                    TvContract.WatchNextPrograms._ID,
+                    TvContract.WatchNextPrograms.COLUMN_EPISODE_TITLE}, null, null, null)) {
                 if (c != null) {
                     items = new ArrayList<>();
                     while (c.moveToNext()) {
@@ -93,9 +100,12 @@ final class WatchNext {
                         it.poster = c.getString(2);
                         if (it.poster == null || it.poster.isEmpty()) it.poster = c.getString(3);
                         it.intentUri = c.getString(4);
-                        it.position = c.getLong(5);
+                        it.position = c.isNull(5) ? -1 : c.getLong(5);
                         it.duration = c.getLong(6);
                         it.engaged = c.getLong(7);
+                        it.programId = c.getLong(8);
+                        it.episodeTitle = c.getString(9);
+                        it.subtitle = it.episodeTitle;
                         if (it.pkg == null || it.title == null || it.title.isEmpty() || skip.contains(it.pkg)) continue;
                         items.add(it);
                     }
@@ -107,6 +117,19 @@ final class WatchNext {
             }
             List<Item> result = items;
             ui.post(() -> cb.done(result));
+        });
+    }
+
+    /** A provider may restrict deletion to the owner app. Callers must still support local dismissal. */
+    static void remove(Handler ui, ContentResolver cr, long id, Weather.Callback<Boolean> callback) {
+        IO.execute(() -> {
+            boolean removed = false;
+            try {
+                removed = cr.delete(TvContract.buildWatchNextProgramUri(id), null, null) > 0;
+            } catch (RuntimeException ignored) {
+            }
+            boolean result = removed;
+            ui.post(() -> callback.done(result));
         });
     }
 }

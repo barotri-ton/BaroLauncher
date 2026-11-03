@@ -131,17 +131,17 @@ final class Weather {
 
     /** WMO weather interpretation codes, as Open-Meteo reports them. */
     static String describe(int code) {
-        if (code == 0) return "Clear";
-        if (code == 1) return "Mostly clear";
-        if (code == 2) return "Partly cloudy";
-        if (code == 3) return "Cloudy";
-        if (code == 45 || code == 48) return "Fog";
-        if (code >= 51 && code <= 57) return "Drizzle";
-        if (code >= 61 && code <= 67) return "Rain";
-        if (code >= 71 && code <= 77) return "Snow";
-        if (code >= 80 && code <= 82) return "Showers";
-        if (code == 85 || code == 86) return "Snow showers";
-        if (code >= 95) return "Thunderstorm";
+        if (code == 0) return "Trời quang";
+        if (code == 1) return "Ít mây";
+        if (code == 2) return "Mây rải rác";
+        if (code == 3) return "Nhiều mây";
+        if (code == 45 || code == 48) return "Sương mù";
+        if (code >= 51 && code <= 57) return "Mưa phùn";
+        if (code >= 61 && code <= 67) return "Mưa";
+        if (code >= 71 && code <= 77) return "Tuyết";
+        if (code >= 80 && code <= 82) return "Mưa rào";
+        if (code == 85 || code == 86) return "Mưa tuyết";
+        if (code >= 95) return "Dông";
         return "";
     }
 

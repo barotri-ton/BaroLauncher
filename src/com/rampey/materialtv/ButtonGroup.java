@@ -47,7 +47,7 @@ final class ButtonGroup extends LinearLayout {
         setGravity(Gravity.CENTER_VERTICAL);
         setClipChildren(false);
         setClipToPadding(false);
-        strip.setCornerRadius(dp(30));
+        strip = new GlassDrawable(dp(30), dp(1));
         setBackground(strip);
         setPadding(dp(5), dp(5), dp(5), dp(5));
         styleStrip();
@@ -75,7 +75,7 @@ final class ButtonGroup extends LinearLayout {
             b.setOnClickListener(v -> listener.onPick(index));
             b.setOnFocusChangeListener((v, focused) -> {
                 v.animate().scaleX(focused ? 1.05f : 1f).scaleY(focused ? 1.05f : 1f)
-                        .setInterpolator(Motion.FAST_SPATIAL).setDuration(Motion.FAST_SPATIAL_MS).start();
+                        .setInterpolator(Motion.FAST_SPATIAL).setDuration(Motion.duration(Motion.FAST_SPATIAL_MS)).start();
                 restyle(index, true);
             });
             LayoutParams lp = new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
@@ -96,25 +96,33 @@ final class ButtonGroup extends LinearLayout {
     }
 
     void setPalette(Palette p) {
+        Palette previousPalette = palette;
         palette = p;
         if (stripAnimator != null) stripAnimator.cancel();
+        if (Motion.reduced()) {
+            styleStrip();
+            for (int i = 0; i < buttons.size(); i++) restyle(i, false);
+            return;
+        }
         int from = strip.getColor().getDefaultColor();
         int to = stripColor();
-        stripAnimator = ValueAnimator.ofArgb(from, to).setDuration(Motion.DEFAULT_EFFECTS_MS);
+        android.animation.ArgbEvaluator colors = new android.animation.ArgbEvaluator();
+        stripAnimator = ValueAnimator.ofArgb(from, to).setDuration(Motion.duration(Motion.DEFAULT_EFFECTS_MS));
         stripAnimator.setInterpolator(Motion.DEFAULT_EFFECTS);
-        stripAnimator.addUpdateListener(a -> strip.setColor((int) a.getAnimatedValue()));
+        stripAnimator.addUpdateListener(a -> strip.setGlassColors((int) a.getAnimatedValue(),
+                (int) colors.evaluate(a.getAnimatedFraction(), previousPalette.onSurface, p.onSurface)));
         stripAnimator.start();
         for (int i = 0; i < buttons.size(); i++) restyle(i, true, true);
     }
 
-    private final GradientDrawable strip = new GradientDrawable();
+    private final GlassDrawable strip;
 
     private void styleStrip() {
-        strip.setColor(stripColor());
+        strip.setGlassColors(palette.container, palette.onSurface);
     }
 
     private int stripColor() {
-        return (palette.container & 0x00FFFFFF) | 0xE6000000;
+        return palette.container;
     }
 
     private void restyle(int index, boolean animate) {
@@ -142,14 +150,14 @@ final class ButtonGroup extends LinearLayout {
             return;
         }
         int from = fills.get(index);
-        if (!animate || from == fill || !isAttachedToWindow()) {
+        if (!animate || Motion.reduced() || from == fill || !isAttachedToWindow()) {
             bg.setColor(fill);
             fills.set(index, fill);
             return;
         }
         final GradientDrawable g = bg;
         ValueAnimator a = ValueAnimator.ofArgb(from, fill)
-                .setDuration(retint ? Motion.DEFAULT_EFFECTS_MS : Motion.FAST_EFFECTS_MS);
+                .setDuration(Motion.duration(retint ? Motion.DEFAULT_EFFECTS_MS : Motion.FAST_EFFECTS_MS));
         a.setInterpolator(retint ? Motion.DEFAULT_EFFECTS : Motion.FAST_EFFECTS);
         a.addUpdateListener(an -> {
             int color = (int) an.getAnimatedValue();

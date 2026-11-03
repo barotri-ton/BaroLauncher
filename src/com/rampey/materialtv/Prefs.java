@@ -145,7 +145,7 @@ final class Prefs {
     }
 
     /** Fixed color themes next to "follow the focused app" (index 0); seeds are the same kind the banners give. */
-    static final String[] COLOR_NAMES = {"Follow app", "Ocean", "Forest", "Sunset", "Rose", "Violet", "Graphite"};
+    static final String[] COLOR_NAMES = {"Theo ứng dụng", "Đại dương", "Rừng xanh", "Hoàng hôn", "Hồng", "Tím", "Than chì"};
     private static final int[] COLOR_SEEDS = {0, 0xFF1976D2, 0xFF2E7D32, 0xFFEF6C00, 0xFFD81B60, 0xFF6750A4, 0xFF607D8B};
 
     int colorTheme() {
@@ -206,6 +206,7 @@ final class Prefs {
                 it.subtitle = o.optString("subtitle", "");
                 it.mediaId = o.optString("mediaId", null);
                 it.mediaUri = o.optString("mediaUri", null);
+                it.poster = o.optString("poster", null);
                 it.position = o.optLong("position");
                 it.duration = o.optLong("duration");
                 it.engaged = o.optLong("engaged");
@@ -221,15 +222,40 @@ final class Prefs {
     void addRecent(WatchNext.Item item) {
         List<WatchNext.Item> list = recent();
         for (int i = list.size() - 1; i >= 0; i--) {
-            if (list.get(i).pkg.equals(item.pkg) && list.get(i).title.equals(item.title)) list.remove(i);
+            WatchNext.Item previous = list.get(i);
+            if (previous.pkg.equals(item.pkg) && previous.title.equals(item.title)) {
+                if (item.poster == null) item.poster = previous.poster;
+                if (item.duration <= 0) item.duration = previous.duration;
+                if (item.position < 0) item.position = previous.position;
+                if (item.mediaId == null) item.mediaId = previous.mediaId;
+                if (item.mediaUri == null) item.mediaUri = previous.mediaUri;
+                list.remove(i);
+            }
         }
         list.add(0, item);
         while (list.size() > MAX_RECENT) list.remove(list.size() - 1);
+        saveRecent(list);
+    }
+
+    /** Attach late artwork without moving an item forward or overwriting its newer playback position. */
+    boolean setRecentPoster(String pkg, String title, String poster) {
+        List<WatchNext.Item> list = recent();
+        for (WatchNext.Item item : list) {
+            if (item.pkg.equals(pkg) && item.title.equals(title)) {
+                item.poster = poster;
+                saveRecent(list);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void saveRecent(List<WatchNext.Item> list) {
         try {
             org.json.JSONArray all = new org.json.JSONArray();
             for (WatchNext.Item it : list) {
                 all.put(new org.json.JSONObject().put("pkg", it.pkg).put("title", it.title).put("subtitle", it.subtitle == null ? "" : it.subtitle)
-                        .put("mediaId", it.mediaId).put("mediaUri", it.mediaUri).put("position", it.position)
+                        .put("mediaId", it.mediaId).put("mediaUri", it.mediaUri).put("poster", it.poster).put("position", it.position)
                         .put("duration", it.duration).put("engaged", it.engaged));
             }
             sp.edit().putString("recent", all.toString()).apply();
@@ -238,7 +264,38 @@ final class Prefs {
     }
 
     void clearRecent() {
-        sp.edit().remove("recent").apply();
+        sp.edit().remove("recent").remove("continue_dismissed").apply();
+    }
+
+    void removeRecentPackage(String pkg) {
+        List<WatchNext.Item> list = recent();
+        if (list.removeIf(item -> item.pkg.equals(pkg))) saveRecent(list);
+    }
+
+    /** Hide a program locally until it is watched again; no privileged TV-provider access required. */
+    void dismissContinue(WatchNext.Item item) {
+        org.json.JSONObject hidden;
+        try { hidden = new org.json.JSONObject(sp.getString("continue_dismissed", "{}")); }
+        catch (org.json.JSONException e) { hidden = new org.json.JSONObject(); }
+        try {
+            hidden.put(WatchNext.key(item), item.engaged);
+            while (hidden.length() > 100) hidden.remove(hidden.keys().next());
+        } catch (org.json.JSONException ignored) { }
+        List<WatchNext.Item> list = recent();
+        list.removeIf(previous -> WatchNext.key(previous).equals(WatchNext.key(item)));
+        saveRecent(list);
+        sp.edit().putString("continue_dismissed", hidden.toString()).apply();
+    }
+
+    List<WatchNext.Item> visibleContinue(List<WatchNext.Item> items) {
+        List<WatchNext.Item> out = new ArrayList<>();
+        org.json.JSONObject hidden;
+        try { hidden = new org.json.JSONObject(sp.getString("continue_dismissed", "{}")); }
+        catch (org.json.JSONException e) { hidden = new org.json.JSONObject(); }
+        for (WatchNext.Item item : items) {
+            if (!hidden.has(WatchNext.key(item)) || item.engaged > hidden.optLong(WatchNext.key(item))) out.add(item);
+        }
+        return out;
     }
 
     // ---- weather (on by default: a city the user typed, else the TV's own location, else a guess from its IP) ----
@@ -324,7 +381,7 @@ final class Prefs {
     /** Every choice back to how it came; pinned and hidden apps stay. */
     void resetSettings() {
         SharedPreferences.Editor e = sp.edit();
-        for (String key : new String[]{"reduced_motion", "columns", "clock_mode", "start_app", "fahrenheit", "photos", "photos_mode", "wallpaper", "wallpaper_every", "wallpaper_now", "wallpaper_at","continue", "tv_channels", "tv_channels_cache", "recent", "color_theme", "weather_city", "weather_lat",
+        for (String key : new String[]{"reduced_motion", "columns", "clock_mode", "start_app", "fahrenheit", "photos", "photos_mode", "wallpaper", "wallpaper_every", "wallpaper_now", "wallpaper_at","continue", "continue_dismissed", "tv_channels", "tv_channels_cache", "recent", "color_theme", "weather_city", "weather_lat",
                 "weather_lon", "weather_text", "weather_at", "weather_off", "auto_city", "auto_lat", "auto_lon", "auto_at"}) e.remove(key);
         e.apply();
     }

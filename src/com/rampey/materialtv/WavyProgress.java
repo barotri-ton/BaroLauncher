@@ -66,9 +66,10 @@ final class WavyProgress extends View {
         long now = SystemClock.uptimeMillis();
         float dt = lastFrame == 0 ? 0 : Math.min(0.05f, (now - lastFrame) / 1000f);
         lastFrame = now;
-        float target = playing ? maxAmp : 0f;
+        float target = playing && !Motion.reduced() ? maxAmp : 0f;
+        if (Motion.reduced()) amp = 0f;
         amp += (target - amp) * Math.min(1f, dt * 6f);
-        if (playing) phase = (phase + dt * 2.4f) % (float) (2 * Math.PI);
+        if (playing && !Motion.reduced()) phase = (phase + dt * 2.4f) % (float) (2 * Math.PI);
 
         float w = getWidth(), mid = getHeight() / 2f, inset = active.getStrokeWidth() / 2f;
         float end = inset + (w - 2 * inset) * progress();
@@ -82,7 +83,10 @@ final class WavyProgress extends View {
         canvas.drawPath(wave, active);
         if (end + gap < w - inset) canvas.drawLine(end + gap, mid, w - inset, mid, track);
 
-        if ((playing || Math.abs(amp - target) > 0.05f) && isShown()) postInvalidateOnAnimation();
+        if ((playing || Math.abs(amp - target) > 0.05f) && isShown() && getWindowVisibility() == VISIBLE) {
+            if (Motion.reduced()) postInvalidateDelayed(1000);
+            else postInvalidateOnAnimation();
+        }
     }
 
     static int dp(Context c, float v) {

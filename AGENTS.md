@@ -52,7 +52,7 @@ No Gradle: `build.sh` runs aapt2 -> javac -> d8 -> zipalign -> apksigner and wri
 ```
 
 - Needs Android SDK platform 34, build-tools 34.0.0, JDK 17+ and `zip`. Set `ANDROID_HOME` if the SDK is not in the
-  default location. Env overrides: `BUILD_TOOLS`, `MIN_SDK` (default 28), `VERSION_CODE` (183), `VERSION_NAME` (0.2.0),
+  default location. Env overrides: `BUILD_TOOLS`, `MIN_SDK` (default 28), `VERSION_CODE` (184), `VERSION_NAME` (0.2.1),
   `KEYSTORE` / `KEYSTORE_PASS` / `KEY_ALIAS` (default: the Android debug key).
 - Signing is v1 + v2 only on purpose. A build signed with the default v3 block failed to install on an Android 9
   projector (v3 is the suspected cause); don't "fix" this by enabling v3.
@@ -64,7 +64,7 @@ No Gradle: `build.sh` runs aapt2 -> javac -> d8 -> zipalign -> apksigner and wri
   Gradle project for Android Studio to build.
 - **CI and releases:** pull requests build only. Every code push to `main` also deletes and recreates the `android9-latest`
   GitHub release with the APK, `install.sh` and `uninstall.sh`; a push to `main` is a release, not just a commit.
-  Docs-only changes don't trigger the workflow. The version is grepped from `build.sh` (`VERSION_NAME:-0.2.0`), so bump
+  Docs-only changes don't trigger the workflow. The version is grepped from `build.sh` (`VERSION_NAME:-0.2.1`), so bump
   both `VERSION_NAME` and `VERSION_CODE` there and keep that form.
 - **Tests:** none. The real-TV rule below is the verification bar.
 - `minSdk` is 28 (Android 9); the README's "Android 12 or newer" is tested-support guidance, not the build floor.
@@ -121,7 +121,7 @@ No Gradle: `build.sh` runs aapt2 -> javac -> d8 -> zipalign -> apksigner and wri
 
 ## Layout
 
-- Design baseline 960 x 540 dp, 48 dp side margins (5% overscan safe area). The dock has six 16:9 tiles that fill the
+- Design baseline 960 x 540 dp, 48 dp side margins (5% overscan safe area). The dock has up to eight compact 16:9 tiles across the
   width; the **TV channels** row (on by default; Launcher Manager -> TV channels) sits in a slimmer dock under it, from the
   preview programs the TV's apps publish; Now Playing is 380 dp at top-right; a Continue row (when enabled) peeks
   34 dp under the dock and scrolls up when focused.
@@ -142,9 +142,13 @@ No Gradle: `build.sh` runs aapt2 -> javac -> d8 -> zipalign -> apksigner and wri
   `picsum.photos` for a 1280 x 720 photo. The screensaver can also use the bundled wallpapers offline. The Home
   wallpaper is always bundled and offline.
 - The optional **Continue** tab (off by default) reads Watch Next entries (`READ_TV_LISTINGS`) only while on and keeps
-  up to 12 played items (title, app, position) in local `SharedPreferences`, clearable in Launcher settings. A poster
+  up to 12 played items (title, app, position, duration and app-supplied artwork address) in local `SharedPreferences`,
+  clearable in Launcher settings. Media-session artwork bitmaps are saved as small JPEGs in private app storage,
+  limited to the remembered items and removed when history is cleared. A poster
   that is an https address loads from the address the app supplied, so that app's image server sees the TV's address,
   as the app itself would. Nothing the app reads on the TV is sent anywhere.
+  While Home is visible, a content observer refreshes this row when Watch Next changes. Holding OK can remove an item;
+  if Android prevents deleting another app's program, the launcher hides it locally until it is watched again.
 - The **TV channels** row (on by default, turned off in Launcher Manager -> TV channels) reads the preview programs the
   TV's apps publish (`READ_TV_LISTINGS`): the name, the logo address the app gave and the intent that opens that
   channel. Only while the row is on, a logo loads from that address (kept in memory while the launcher runs), so that

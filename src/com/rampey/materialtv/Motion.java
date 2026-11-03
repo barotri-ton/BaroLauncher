@@ -8,6 +8,21 @@ import android.view.animation.PathInterpolator;
  * shape); effects curves never overshoot (color, opacity). Fast is for small components, default for larger ones.
  */
 final class Motion {
+    private static boolean reduced;
+
+    static void setReduced(boolean value) {
+        reduced = value;
+    }
+
+    static boolean reduced() {
+        return reduced;
+    }
+
+    /** Finite UI transitions settle immediately when reduced motion is selected. */
+    static long duration(long normal) {
+        return reduced ? 0 : normal;
+    }
+
     private Motion() {
     }
 

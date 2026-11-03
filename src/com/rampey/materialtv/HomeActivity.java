@@ -82,6 +82,44 @@ public class HomeActivity extends Activity {
     private static final PathInterpolator EMPHASIZED = new PathInterpolator(0.05f, 0.7f, 0.1f, 1f);
 
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Map<GradientDrawable, ValueAnimator> cornerAnimations = new HashMap<>();
+    private final Map<GradientDrawable, ValueAnimator> ringAnimations = new HashMap<>();
+    private final java.util.Set<ValueAnimator> uiAnimations = new java.util.HashSet<>();
+
+    private void startUiAnimation(ValueAnimator animation) {
+        uiAnimations.add(animation);
+        animation.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override public void onAnimationEnd(android.animation.Animator a) {
+                uiAnimations.remove(animation);
+            }
+        });
+        animation.start();
+    }
+
+    private void animateCorners(GradientDrawable card, GradientDrawable ring, float target) {
+        ValueAnimator previous = cornerAnimations.remove(card);
+        if (previous != null) previous.cancel();
+        if (Motion.reduced()) {
+            card.setCornerRadius(target);
+            ring.setCornerRadius(target + dp(RING));
+            return;
+        }
+        ValueAnimator animation = ValueAnimator.ofFloat(card.getCornerRadius(), target);
+        animation.setDuration(Motion.FAST_SPATIAL_MS);
+        animation.setInterpolator(Motion.FAST_SPATIAL);
+        animation.addUpdateListener(a -> {
+            float radius = (float) a.getAnimatedValue();
+            card.setCornerRadius(radius);
+            ring.setCornerRadius(radius + dp(RING));
+        });
+        animation.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override public void onAnimationEnd(android.animation.Animator a) {
+                cornerAnimations.remove(card);
+            }
+        });
+        cornerAnimations.put(card, animation);
+        startUiAnimation(animation);
+    }
     private final Map<String, Integer> seedCache = new ConcurrentHashMap<>();
     private final Map<Integer, Palette> paletteCache = new ConcurrentHashMap<>();
     private final Map<Integer, Typeface> titleFonts = new HashMap<>();
@@ -116,7 +154,7 @@ public class HomeActivity extends Activity {
             if (!HomeActivity.this.showingApps) fillApps();
         }
     };
-    private GradientDrawable dockShape;
+    private GlassDrawable dockShape;
     private GradientDrawable channelShape;
     private View homePage;
     private ScrollView appsPage;
@@ -251,16 +289,21 @@ public class HomeActivity extends Activity {
     /** A new minute: the old time lifts away, the new one settles in with a short weight swell. */
     private void changeClock(String time) {
         int base = clockWeight();
-        clock.animate().alpha(0f).translationY(-dp(6)).setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.FAST_EFFECTS_MS)
+        if (Motion.reduced()) {
+            clock.setText(time);
+            clock.setTypeface(clockFont(base));
+            return;
+        }
+        clock.animate().alpha(0f).translationY(-dp(6)).setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.duration(Motion.FAST_EFFECTS_MS))
                 .withEndAction(() -> {
                     clock.setText(time);
                     clock.setTranslationY(dp(8));
                     clock.animate().alpha(1f).translationY(0).setInterpolator(Motion.DEFAULT_SPATIAL)
-                            .setDuration(Motion.DEFAULT_SPATIAL_MS).start();
-                    ValueAnimator swell = ValueAnimator.ofInt(base + 320, base).setDuration(700);
+                            .setDuration(Motion.duration(Motion.DEFAULT_SPATIAL_MS)).start();
+                    ValueAnimator swell = ValueAnimator.ofInt(base + 320, base).setDuration(Motion.duration(Motion.DEFAULT_SPATIAL_MS));
                     swell.setInterpolator(Motion.DEFAULT_SPATIAL);
                     swell.addUpdateListener(a -> clock.setTypeface(clockFont((int) a.getAnimatedValue())));
-                    swell.start();
+                    startUiAnimation(swell);
                 }).start();
     }
 
@@ -283,6 +326,8 @@ public class HomeActivity extends Activity {
         super.onCreate(state);
         pm = getPackageManager();
         prefs = new Prefs(this);
+        RecentArtwork.prune(this);
+        Motion.setReduced(prefs.reducedMotion());
         if (prefs.colorSeed() != 0) palette = Palette.of(prefs.colorSeed());
         setContentView(buildRoot());
         openStartApp();
@@ -302,6 +347,16 @@ public class HomeActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        Set<String> checkedPackages = new java.util.HashSet<>();
+        for (WatchNext.Item item : prefs.recent()) {
+            if (!checkedPackages.add(item.pkg)) continue;
+            try {
+                pm.getApplicationInfo(item.pkg, 0);
+            } catch (PackageManager.NameNotFoundException removed) {
+                prefs.removeRecentPackage(item.pkg);
+                RecentArtwork.prune(this);
+            }
+        }
         fillDock();
         fillChannels();
         fillHomeContinue();
@@ -317,6 +372,7 @@ public class HomeActivity extends Activity {
         handler.removeCallbacks(prebuildApps);
         handler.postDelayed(prebuildApps, 1500);
         foreground = true;
+        updateContinueObservers();
         if (prefs.randomWallpaper()) applyWallpaper();   // its time may have come while another app was up
         showWeather();
         startNowPlaying();
@@ -331,6 +387,7 @@ public class HomeActivity extends Activity {
         super.onPause();
         handler.removeCallbacks(tick);
         // Nothing animates while another app is on screen: no CPU or GPU use in the background.
+        for (ValueAnimator animation : new ArrayList<>(uiAnimations)) animation.end();
         drifting = false;
         shape.removeCallbacks(drift);
         handler.removeCallbacks(prebuildApps);
@@ -340,6 +397,9 @@ public class HomeActivity extends Activity {
         // The media session stays watched (it only updates fields, never views) so the card remembers what played
         // while another app had the screen; it is let go in onDestroy.
         foreground = false;
+        stopContinueObservers();
+        homeContinueRequest++;
+        continueRequest++;
         if (folderDialog != null) folderDialog.dismiss();
         if (quickDialog != null) quickDialog.dismiss();
         handler.removeCallbacks(refreshWeather);
@@ -443,7 +503,7 @@ public class HomeActivity extends Activity {
         LinearLayout appsColumn = new LinearLayout(this);
         appsColumn.setOrientation(LinearLayout.VERTICAL);
         appsColumn.setClipChildren(false);
-        TextView appsTitle = text("All apps", 34, palette.onSurface, 760);
+        TextView appsTitle = text("Tất cả ứng dụng", 34, palette.onSurface, 760);
         appsTitle.setPadding(dp(4), dp(28), 0, dp(8));
         appsColumn.addView(appsTitle);
         appsGrid = new GridLayout(this);
@@ -493,7 +553,7 @@ public class HomeActivity extends Activity {
         bar.addView(when, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START | Gravity.TOP));
 
         nav = new ButtonGroup(this, font(600), palette,
-                new String[]{"Home", "Apps", "Continue", "Settings"},
+                new String[]{"Trang chủ", "Ứng dụng", "Xem tiếp", "Cài đặt"},
                 new int[]{R.drawable.ic_home, R.drawable.ic_apps, R.drawable.ic_play, R.drawable.ic_settings},
                 new boolean[]{true, true, true, false}, true,   // round icons only: the clock and the hero carry the screen
                 index -> {
@@ -503,6 +563,7 @@ public class HomeActivity extends Activity {
                     else showQuickPanel();
                 });
         nav.select(0);
+        fillHomeContinue();
         applyContinueTab();
         nav.button(3).setOnLongClickListener(v -> {
             showLauncherSettings();
@@ -541,7 +602,7 @@ public class HomeActivity extends Activity {
         homeContinue.setOrientation(LinearLayout.VERTICAL);
         homeContinue.setClipChildren(false);
         homeContinue.setVisibility(View.GONE);
-        TextView heading = text("Continue watching", 18, palette.onSurfaceVariant, 640);
+        TextView heading = text("Tiếp tục xem", 18, palette.onSurfaceVariant, 640);
         heading.setPadding(dp(4), dp(10), 0, 0);
         homeContinue.addView(heading);
         HorizontalScrollView scroller = new HorizontalScrollView(this);
@@ -572,18 +633,15 @@ public class HomeActivity extends Activity {
         // Normal spacing and no ligatures: at display sizes "tf" or "fl" would otherwise touch.
         focusTitle.setLetterSpacing(0.005f);
         focusTitle.setFontFeatureSettings("'liga' 0, 'clig' 0, 'dlig' 0");
-        page.addView(focusTitle);
-        Space gap = new Space(this);
-        page.addView(gap, new LinearLayout.LayoutParams(1, dp(28)));
+        focusTitle.setVisibility(View.GONE);
 
         // The dock: a rounded tonal container holding the favorites, like Material's floating toolbar.
         FrameLayout dockFrame = new FrameLayout(this);
         dockFrame.setClipChildren(false);
-        dockShape = new GradientDrawable();
-        dockShape.setCornerRadius(dp(40));
+        dockShape = new GlassDrawable(dp(32), dp(1));
         // A floating panel over the hero: see-through, with a hairline light edge (glass without a blur).
-        dockShape.setColor(withAlpha(palette.container, DOCK_ALPHA));
-        dockShape.setStroke(dp(1), withAlpha(palette.onSurface, DOCK_EDGE));
+        dockShape.setGlassColors(palette.container, palette.onSurface);
+        dockFrame.setElevation(dp(8));
         dockFrame.setBackground(dockShape);
         dockFrame.setPadding(dp(DOCK_PAD), dp(4), dp(DOCK_PAD), dp(4));
 
@@ -626,7 +684,7 @@ public class HomeActivity extends Activity {
 
     // ---- content ----
 
-    private static final int DOCK_SIZE = 6;
+    private static final int DOCK_SIZE = 8;
     private static final int DOCK_ALPHA = 0x8C, DOCK_EDGE = 0x2E;
     /** Never in the dock: settings, the stock home screen and system helpers. */
     private static final java.util.Set<String> NOT_IN_DOCK = new java.util.HashSet<>(java.util.Arrays.asList(
@@ -791,10 +849,11 @@ public class HomeActivity extends Activity {
         dockBadges.clear();
         deviceDots.clear();
         warmPalettes(present);
-        int n = Math.max(1, present.size());
+        int n = DOCK_SIZE;
         float screenDp = getResources().getDisplayMetrics().widthPixels / getResources().getDisplayMetrics().density;
         float inner = screenDp - 2 * (SIDE + DOCK_PAD + SCROLL_PAD) - (n - 1) * GAP - n * 2 * RING;
-        int tileDp = (int) Math.max(96, Math.min(220, inner / n));
+        // Keep eight tiles within the safe area, including rings and focus spacing.
+        int tileDp = (int) Math.max(64, Math.min(220, inner / n));
         int i = 0;
         for (String pkg : present) {
             Intent intent = dockIntent(pkg);
@@ -925,19 +984,15 @@ public class HomeActivity extends Activity {
         card.setOnFocusChangeListener((v, focused) -> {
             float scale = focused ? 1.10f : 1f;
             ringFrame.animate().scaleX(scale).scaleY(scale)
-                    .setInterpolator(Motion.FAST_SPATIAL).setDuration(Motion.FAST_SPATIAL_MS).start();
+                    .setInterpolator(Motion.FAST_SPATIAL).setDuration(Motion.duration(Motion.FAST_SPATIAL_MS)).start();
             card.setOutlineSpotShadowColor(palette.primary);
             card.setOutlineAmbientShadowColor(palette.primary);
             card.animate().translationZ(focused ? dp(14) : 0)
-                    .setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.DEFAULT_EFFECTS_MS).start();
-            ObjectAnimator corners = ObjectAnimator.ofFloat(cardShape, "cornerRadius", cardShape.getCornerRadius(), focused ? radius * 0.62f : radius)
-                    .setDuration(Motion.FAST_SPATIAL_MS);
-            corners.setInterpolator(Motion.FAST_SPATIAL);
-            corners.start();
-            ring.setCornerRadius((focused ? radius * 0.62f : radius) + dp(RING));
+                    .setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.duration(Motion.DEFAULT_EFFECTS_MS)).start();
+            animateCorners(cardShape, ring, focused ? radius * 0.62f : radius);
             fadeRing(ring, focused);
             shiftNeighbors(holder, focused);
-            caption.animate().alpha(focused ? 1f : 0.85f).setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.FAST_EFFECTS_MS).start();
+            caption.animate().alpha(focused ? 1f : 0.85f).setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.duration(Motion.FAST_EFFECTS_MS)).start();
             caption.setTextColor(focused ? palette.onSurface : palette.onSurfaceVariant);
             if (focused) {
                 loadLogo(ch, logo, mark);
@@ -1118,29 +1173,25 @@ public class HomeActivity extends Activity {
         card.setOnFocusChangeListener((v, focused) -> {
             float scale = focused ? 1.10f : 1f;
             ringFrame.animate().scaleX(scale).scaleY(scale)
-                    .setInterpolator(Motion.FAST_SPATIAL).setDuration(Motion.FAST_SPATIAL_MS).start();
+                    .setInterpolator(Motion.FAST_SPATIAL).setDuration(Motion.duration(Motion.FAST_SPATIAL_MS)).start();
             // A glow in the app's own color (TV focus guidance) instead of a dark shadow.
             card.setOutlineSpotShadowColor(palette.primary);
             card.setOutlineAmbientShadowColor(palette.primary);
             card.animate().translationZ(focused ? dp(14) : 0)
-                    .setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.DEFAULT_EFFECTS_MS).start();
-            ObjectAnimator corners = ObjectAnimator.ofFloat(cardShape, "cornerRadius", cardShape.getCornerRadius(), focused ? radius * 0.62f : radius)
-                    .setDuration(Motion.FAST_SPATIAL_MS);
-            corners.setInterpolator(Motion.FAST_SPATIAL);
-            corners.start();
-            ring.setCornerRadius((focused ? radius * 0.62f : radius) + dp(RING));
+                    .setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.duration(Motion.DEFAULT_EFFECTS_MS)).start();
+            animateCorners(cardShape, ring, focused ? radius * 0.62f : radius);
             fadeRing(ring, focused);
             if (inDock) shiftNeighbors(holder, focused);
             if (inDock && focused && homeScroll.getScrollY() != 0) homeScroll.smoothScrollTo(0, 0);
             caption.animate().cancel();
             if (inDock && focused) {
                 caption.setVisibility(View.VISIBLE);
-                caption.animate().alpha(1f).setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.FAST_EFFECTS_MS).start();
+                caption.animate().alpha(1f).setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.duration(Motion.FAST_EFFECTS_MS)).start();
             } else if (inDock) {
-                caption.animate().alpha(0f).setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.FAST_EFFECTS_MS)
+                caption.animate().alpha(0f).setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.duration(Motion.FAST_EFFECTS_MS))
                         .withEndAction(() -> caption.setVisibility(View.GONE)).start();
             } else {
-                caption.animate().alpha(focused ? 1f : 0.85f).setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.FAST_EFFECTS_MS).start();
+                caption.animate().alpha(focused ? 1f : 0.85f).setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.duration(Motion.FAST_EFFECTS_MS)).start();
             }
             caption.setTextColor(focused ? palette.onSurface : palette.onSurfaceVariant);
             if (focused) onTileFocused(pkg, label, art);
@@ -1193,11 +1244,24 @@ public class HomeActivity extends Activity {
 
     /** The focus ring fades in (fast effects) in the palette's focus color instead of snapping on. */
     private void fadeRing(GradientDrawable ring, boolean focused) {
+        ValueAnimator previous = ringAnimations.remove(ring);
+        int opacity = previous != null ? (int) previous.getAnimatedValue() : focused ? 0 : 255;
+        if (previous != null) previous.cancel();
         int color = palette.inverseSurface;
-        ValueAnimator a = ValueAnimator.ofInt(focused ? 0 : 255, focused ? 255 : 0).setDuration(Motion.FAST_EFFECTS_MS);
+        if (Motion.reduced()) {
+            ring.setStroke(dp(3), focused ? color : Color.TRANSPARENT);
+            return;
+        }
+        ValueAnimator a = ValueAnimator.ofInt(opacity, focused ? 255 : 0).setDuration(Motion.FAST_EFFECTS_MS);
         a.setInterpolator(Motion.FAST_EFFECTS);
         a.addUpdateListener(an -> ring.setStroke(dp(3), (color & 0x00FFFFFF) | ((int) an.getAnimatedValue() << 24)));
-        a.start();
+        a.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override public void onAnimationEnd(android.animation.Animator animation) {
+                ringAnimations.remove(ring);
+            }
+        });
+        ringAnimations.put(ring, a);
+        startUiAnimation(a);
     }
 
     /** Standard button-group behavior on the dock: the neighbors of the focused tile make a little room. */
@@ -1209,7 +1273,7 @@ public class HomeActivity extends Activity {
             float dx = !focused ? 0 : i == at - 1 ? -dp(8) : i == at + 1 ? dp(8) : 0;
             if (!focused && i != at - 1 && i != at + 1) continue;
             row.getChildAt(i).animate().translationX(dx)
-                    .setInterpolator(Motion.DEFAULT_SPATIAL).setDuration(Motion.DEFAULT_SPATIAL_MS).start();
+                    .setInterpolator(Motion.DEFAULT_SPATIAL).setDuration(Motion.duration(Motion.DEFAULT_SPATIAL_MS)).start();
         }
     }
 
@@ -1219,9 +1283,9 @@ public class HomeActivity extends Activity {
 
     /** Press feedback (a quick squash), then launch; if the app hasn't appeared after 300 ms, a shape loader morphs. */
     private void pressAndLaunch(View tile, ImageView loader, CookieDrawable shape, Intent intent) {
-        tile.animate().scaleX(1.0f).scaleY(1.0f).setInterpolator(Motion.FAST_SPATIAL).setDuration(120)
+        if (!Motion.reduced()) tile.animate().scaleX(1.0f).scaleY(1.0f).setInterpolator(Motion.FAST_SPATIAL).setDuration(Motion.duration(Motion.FAST_EFFECTS_MS))
                 .withEndAction(() -> tile.animate().scaleX(1.10f).scaleY(1.10f)
-                        .setInterpolator(Motion.FAST_SPATIAL).setDuration(Motion.FAST_SPATIAL_MS).start()).start();
+                        .setInterpolator(Motion.FAST_SPATIAL).setDuration(Motion.duration(Motion.FAST_SPATIAL_MS)).start()).start();
         launch(intent);
         if (pendingLoader[0] != null) handler.removeCallbacks(pendingLoader[0]);
         pendingLoader[0] = () -> {
@@ -1230,7 +1294,8 @@ public class HomeActivity extends Activity {
             shape.setColor(palette.primary);
             loader.setAlpha(0f);
             loader.setVisibility(View.VISIBLE);
-            loader.animate().alpha(1f).setDuration(Motion.FAST_EFFECTS_MS).start();
+            loader.animate().alpha(1f).setDuration(Motion.duration(Motion.FAST_EFFECTS_MS)).start();
+            if (Motion.reduced()) return;
             final int[] seq = {4, 6, 7, 9, 12, 7, 6};
             final int[] step = {0};
             loaderAnim = ValueAnimator.ofFloat(0f, 1f).setDuration(420);
@@ -1277,11 +1342,11 @@ public class HomeActivity extends Activity {
 
     /** The name above the dock: Home only, and only when it changes (a long channel row would re-animate it). */
     private void setFocusTitle(CharSequence label) {
-        if (label == null || TextUtils.equals(focusTitle.getText(), label)) return;
+        if (focusTitle.getVisibility() != View.VISIBLE || label == null || TextUtils.equals(focusTitle.getText(), label)) return;
         focusTitle.setText(label);
         focusTitle.setAlpha(0f);
         focusTitle.setTranslationY(dp(12));
-        focusTitle.animate().alpha(1f).translationY(0).setInterpolator(Motion.DEFAULT_SPATIAL).setDuration(Motion.DEFAULT_SPATIAL_MS).start();
+        focusTitle.animate().alpha(1f).translationY(0).setInterpolator(Motion.DEFAULT_SPATIAL).setDuration(Motion.duration(Motion.DEFAULT_SPATIAL_MS)).start();
         animateTitleWeight();
     }
 
@@ -1316,11 +1381,11 @@ public class HomeActivity extends Activity {
         ImageView front = heroViews[heroFront];
         back.setImageBitmap(b);
         back.animate().cancel();
-        back.animate().alpha(1f).setInterpolator(Motion.DEFAULT_EFFECTS).setDuration(Motion.DEFAULT_EFFECTS_MS * 2).start();
+        back.animate().alpha(1f).setInterpolator(Motion.DEFAULT_EFFECTS).setDuration(Motion.duration(Motion.DEFAULT_EFFECTS_MS * 2)).start();
         front.animate().cancel();
-        front.animate().alpha(0f).setInterpolator(Motion.DEFAULT_EFFECTS).setDuration(Motion.DEFAULT_EFFECTS_MS * 2).start();
+        front.animate().alpha(0f).setInterpolator(Motion.DEFAULT_EFFECTS).setDuration(Motion.duration(Motion.DEFAULT_EFFECTS_MS * 2)).start();
         heroFront = 1 - heroFront;
-        if (heroScrim.getAlpha() < 1f) heroScrim.animate().alpha(1f).setDuration(Motion.DEFAULT_EFFECTS_MS).start();
+        if (heroScrim.getAlpha() < 1f) heroScrim.animate().alpha(1f).setDuration(Motion.duration(Motion.DEFAULT_EFFECTS_MS)).start();
     }
 
     /**
@@ -1347,8 +1412,8 @@ public class HomeActivity extends Activity {
     /** The hero belongs to Home: it fades away on the Apps and Continue pages and comes back with Home. */
     private void fadeHero(boolean on) {
         float target = on && heroKey != null && prefs.wallpaper() == null ? 1f : 0f;
-        heroViews[heroFront].animate().alpha(target).setDuration(Motion.DEFAULT_EFFECTS_MS).start();
-        heroScrim.animate().alpha(target).setDuration(Motion.DEFAULT_EFFECTS_MS).start();
+        heroViews[heroFront].animate().alpha(target).setDuration(Motion.duration(Motion.DEFAULT_EFFECTS_MS)).start();
+        heroScrim.animate().alpha(target).setDuration(Motion.duration(Motion.DEFAULT_EFFECTS_MS)).start();
     }
 
     private Palette paletteFor(String pkg, Drawable art) {
@@ -1394,10 +1459,10 @@ public class HomeActivity extends Activity {
 
     /** Expressive type: the app name lands a little lighter and settles into its full weight. */
     private void animateTitleWeight() {
-        ValueAnimator a = ValueAnimator.ofInt(0, 6).setDuration(Motion.DEFAULT_SPATIAL_MS);
+        ValueAnimator a = ValueAnimator.ofInt(0, 6).setDuration(Motion.duration(Motion.DEFAULT_SPATIAL_MS));
         a.setInterpolator(Motion.DEFAULT_EFFECTS);
         a.addUpdateListener(an -> focusTitle.setTypeface(titleFont(560 + 30 * (int) an.getAnimatedValue())));
-        a.start();
+        startUiAnimation(a);
     }
 
     private Typeface titleFont(int weight) {
@@ -1423,10 +1488,10 @@ public class HomeActivity extends Activity {
         float[] sharp = {1f, 1f, 0.55f, 0.65f, 1f, 2.4f, 1f, 1f, 1f};
         int k = Math.abs(pkg.hashCode()) % lobes.length;
         cookie.morphTo(lobes[k], depths[k], sharp[k]);
-        ValueAnimator a = ValueAnimator.ofFloat(0f, 1f).setDuration(Motion.DEFAULT_SPATIAL_MS);
+        ValueAnimator a = ValueAnimator.ofFloat(0f, 1f).setDuration(Motion.duration(Motion.DEFAULT_SPATIAL_MS));
         a.setInterpolator(Motion.DEFAULT_SPATIAL);
         a.addUpdateListener(an -> cookie.setProgress((float) an.getAnimatedValue()));
-        a.start();
+        startUiAnimation(a);
     }
 
     /** Cross-fade every tinted surface from the current palette to the next. */
@@ -1437,7 +1502,7 @@ public class HomeActivity extends Activity {
         if (colorAnimator != null) colorAnimator.cancel();
         ArgbEvaluator argb = new ArgbEvaluator();
         colorAnimator = ValueAnimator.ofFloat(0f, 1f);
-        colorAnimator.setDuration(Motion.DEFAULT_EFFECTS_MS);
+        colorAnimator.setDuration(Motion.duration(Motion.DEFAULT_EFFECTS_MS));
         colorAnimator.setInterpolator(Motion.DEFAULT_EFFECTS);
         colorAnimator.addUpdateListener(a -> {
             float t = (float) a.getAnimatedValue();
@@ -1446,8 +1511,8 @@ public class HomeActivity extends Activity {
             backdrop.setColors(new int[]{top, bottom});
             wallpaperScrim.setBackgroundColor(withAlpha(bottom, WALLPAPER_DIM));
             cookie.setColor((int) argb.evaluate(t, from.primaryContainer, next.primaryContainer));
-            dockShape.setColor(withAlpha((int) argb.evaluate(t, from.container, next.container), DOCK_ALPHA));
-            dockShape.setStroke(dp(1), withAlpha((int) argb.evaluate(t, from.onSurface, next.onSurface), DOCK_EDGE));
+            dockShape.setGlassColors((int) argb.evaluate(t, from.container, next.container),
+                    (int) argb.evaluate(t, from.onSurface, next.onSurface));
             if (channelShape != null) {
                 channelShape.setColor(withAlpha((int) argb.evaluate(t, from.container, next.container), DOCK_ALPHA));
                 channelShape.setStroke(dp(1), withAlpha((int) argb.evaluate(t, from.onSurface, next.onSurface), DOCK_EDGE));
@@ -1504,33 +1569,33 @@ public class HomeActivity extends Activity {
             wallpaperView.setImageBitmap(bitmap);
             wallpaperView.setAlpha(0f);
             wallpaperView.setVisibility(View.VISIBLE);
-            wallpaperView.animate().alpha(1f).setInterpolator(Motion.DEFAULT_EFFECTS).setDuration(Motion.DEFAULT_EFFECTS_MS * 2).start();
+            wallpaperView.animate().alpha(1f).setInterpolator(Motion.DEFAULT_EFFECTS).setDuration(Motion.duration(Motion.DEFAULT_EFFECTS_MS * 2)).start();
             wallpaperScrim.setVisibility(View.VISIBLE);
         });
     }
 
     private String wallpaperLabel() {
         String w = prefs.wallpaper();
-        if (w == null) return "Off";
-        if (prefs.randomWallpaper()) return "Random, " + everyLabel(prefs.wallpaperEvery());
+        if (w == null) return "Tắt";
+        if (prefs.randomWallpaper()) return "Ngẫu nhiên, " + everyLabel(prefs.wallpaperEvery());
         return Wallpapers.label(w);
     }
 
     private static String everyLabel(int minutes) {
-        if (minutes < 60) return "every " + minutes + " min";
-        if (minutes == 60) return "every hour";
-        if (minutes == 1440) return "every day";
-        return "every " + minutes / 60 + " hours";
+        if (minutes < 60) return "mỗi " + minutes + " phút";
+        if (minutes == 60) return "mỗi giờ";
+        if (minutes == 1440) return "mỗi ngày";
+        return "mỗi " + minutes / 60 + " giờ";
     }
 
     private void chooseWallpaper() {
         List<String> files = Wallpapers.files(getAssets());
         String[] labels = new String[files.size() + 2];
-        labels[0] = "Off (colors only)";
-        labels[1] = "Random (" + everyLabel(prefs.wallpaperEvery()) + ")";
+        labels[0] = "Tắt (chỉ dùng màu nền)";
+        labels[1] = "Ngẫu nhiên (" + everyLabel(prefs.wallpaperEvery()) + ")";
         for (int i = 0; i < files.size(); i++) labels[i + 2] = Wallpapers.label(files.get(i));
         new AlertDialog.Builder(this)
-                .setTitle("Wallpaper")
+                .setTitle("Ảnh nền")
                 .setItems(labels, (d, which) -> {
                     prefs.setWallpaper(which == 0 ? null : which == 1 ? Prefs.RANDOM_WALLPAPER : files.get(which - 2));
                     wallpaperChanged(which == 0);
@@ -1545,11 +1610,11 @@ public class HomeActivity extends Activity {
         String[] labels = new String[options.length];
         int checked = 0;
         for (int i = 0; i < options.length; i++) {
-            labels[i] = "Change " + everyLabel(options[i]);
+            labels[i] = "Đổi " + everyLabel(options[i]);
             if (options[i] == prefs.wallpaperEvery()) checked = i;
         }
         new AlertDialog.Builder(this)
-                .setTitle("Random wallpaper")
+                .setTitle("Ảnh nền ngẫu nhiên")
                 .setSingleChoiceItems(labels, checked, (d, which) -> {
                     prefs.setWallpaperEvery(options[which]);
                     applyWallpaper();
@@ -1559,7 +1624,7 @@ public class HomeActivity extends Activity {
                 .show();
     }
 
-    /** A wallpaper replaces the hero; "Off" brings the hero back for the focused app. */
+    /** A wallpaper replaces the hero; "Tắt" brings the hero back for the focused app. */
     private void wallpaperChanged(boolean off) {
         shownWallpaper = null;
         applyWallpaper();
@@ -1595,30 +1660,30 @@ public class HomeActivity extends Activity {
         List<String> items = new ArrayList<>();
         List<Runnable> actions = new ArrayList<>();
         if (at < 0) {
-            items.add("Pin to dock");
+            items.add("Ghim vào thanh ứng dụng");
             actions.add(() -> {
                 if (pinned.size() >= DOCK_SIZE) {
-                    Toast.makeText(this, "The dock holds " + DOCK_SIZE + " pinned apps. Unpin one first.", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, "Thanh ứng dụng chứa tối đa " + DOCK_SIZE + " ứng dụng ghim. Hãy bỏ ghim một ứng dụng trước.", Toast.LENGTH_SHORT).show();
                     return;
                 }
                 pinned.add(pkg);
                 savePinned(pinned, pkg);
             });
         } else {
-            items.add("Unpin from dock");
+            items.add("Bỏ ghim khỏi thanh ứng dụng");
             actions.add(() -> {
                 pinned.remove(pkg);
                 savePinned(pinned, null);
             });
             if (at > 0) {
-                items.add("Move left");
+                items.add("Di chuyển sang trái");
                 actions.add(() -> {
                     Collections.swap(pinned, at, at - 1);
                     savePinned(pinned, pkg);
                 });
             }
             if (at < pinned.size() - 1) {
-                items.add("Move right");
+                items.add("Di chuyển sang phải");
                 actions.add(() -> {
                     Collections.swap(pinned, at, at + 1);
                     savePinned(pinned, pkg);
@@ -1627,7 +1692,7 @@ public class HomeActivity extends Activity {
         }
         String inFolder = folderOf(pkg);
         if (inFolder != null) {
-            items.add("Remove from folder (" + inFolder + ")");
+            items.add("Bỏ khỏi thư mục (" + inFolder + ")");
             actions.add(() -> {
                 Map<String, List<String>> folders = prefs.folders();
                 folders.get(inFolder).remove(pkg);
@@ -1636,24 +1701,24 @@ public class HomeActivity extends Activity {
                 refreshApps();
             });
         } else {
-            items.add("Add to folder");
+            items.add("Thêm vào thư mục");
             actions.add(() -> chooseFolder(pkg));
         }
-        items.add("Hide app");
+        items.add("Ẩn ứng dụng");
         actions.add(() -> {
             Set<String> hidden = prefs.hidden();
             hidden.add(pkg);
             prefs.setHidden(hidden);
             pinned.remove(pkg);
             prefs.setPinned(pinned);
-            Toast.makeText(this, label + " hidden. Show it again in Launcher settings.", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, label + " đã được ẩn. Bạn có thể hiện lại trong cài đặt giao diện.", Toast.LENGTH_LONG).show();
             refreshApps();
         });
         if (canUninstall(pkg)) {
-            items.add("Uninstall");
+            items.add("Gỡ cài đặt");
             actions.add(() -> launch(new Intent(Intent.ACTION_DELETE, Uri.fromParts("package", pkg, null))));
         }
-        items.add("App info");
+        items.add("Thông tin ứng dụng");
         actions.add(() -> launch(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", pkg, null))));
         new AlertDialog.Builder(this)
                 .setTitle(label)
@@ -1695,9 +1760,9 @@ public class HomeActivity extends Activity {
 
     private List<ManagerPage.Section> managerSections() {
         List<ManagerPage.Section> out = new ArrayList<>();
-        out.add(new ManagerPage.Section("Appearance")
-                .row("Wallpaper", this::wallpaperLabel, this::chooseWallpaper)
-                .row("Change random wallpaper", () -> prefs.randomWallpaper() ? everyLabel(prefs.wallpaperEvery()) : "Random is off",
+        out.add(new ManagerPage.Section("Giao diện")
+                .row("Ảnh nền", this::wallpaperLabel, this::chooseWallpaper)
+                .row("Chu kỳ đổi ảnh nền", () -> prefs.randomWallpaper() ? everyLabel(prefs.wallpaperEvery()) : "Đang tắt ngẫu nhiên",
                         () -> {
                             if (!prefs.randomWallpaper()) {
                                 prefs.setWallpaper(Prefs.RANDOM_WALLPAPER);
@@ -1705,13 +1770,14 @@ public class HomeActivity extends Activity {
                             }
                             chooseWallpaperEvery();
                         })
-                .row("Colors", () -> Prefs.COLOR_NAMES[prefs.colorTheme()], () -> {
+                .row("Màu sắc", () -> Prefs.COLOR_NAMES[prefs.colorTheme()], () -> {
                     prefs.setColorTheme((prefs.colorTheme() + 1) % Prefs.COLOR_NAMES.length);
                     applyColorTheme();
                     showLauncherSettings();
                 })
-                .row("Animations", () -> prefs.reducedMotion() ? "Off" : "On", () -> {
+                .row("Hiệu ứng chuyển động", () -> prefs.reducedMotion() ? "Tắt" : "Bật", () -> {
                     prefs.setReducedMotion(!prefs.reducedMotion());
+                    Motion.setReduced(prefs.reducedMotion());
                     drifting = !prefs.reducedMotion();
                     shape.removeCallbacks(drift);
                     if (drifting && foreground) {
@@ -1720,16 +1786,16 @@ public class HomeActivity extends Activity {
                     }
                     showLauncherSettings();
                 }));
-        out.add(new ManagerPage.Section("Home & dock")
-                .row("Dock apps", () -> prefs.pinned().isEmpty() ? "By use" : prefs.pinned().size() + " pinned", this::chooseDockApps)
-                .row("Continue watching", () -> prefs.continueOn() ? "On" : "Off", () -> {
+        out.add(new ManagerPage.Section("Trang chủ và thanh ứng dụng")
+                .row("Ứng dụng trên thanh", () -> prefs.pinned().isEmpty() ? "Theo mức sử dụng" : prefs.pinned().size() + " đã ghim", this::chooseDockApps)
+                .row("Tiếp tục xem", () -> prefs.continueOn() ? "Bật" : "Tắt", () -> {
                     prefs.setContinueOn(!prefs.continueOn());
                     applyContinueTab();
                     fillHomeContinue();
                     showLauncherSettings();
                 })
-                .row("TV channels", () -> !prefs.tvChannelsOn() ? "Off"
-                        : channelList.isEmpty() ? "None found" : channelList.size() + (channelList.size() == 1 ? " channel" : " channels"), () -> {
+                .row("Kênh truyền hình", () -> !prefs.tvChannelsOn() ? "Tắt"
+                        : channelList.isEmpty() ? "Chưa tìm thấy" : channelList.size() + (channelList.size() == 1 ? " kênh" : " kênh"), () -> {
                     prefs.setTvChannelsOn(!prefs.tvChannelsOn());
                     if (prefs.tvChannelsOn()) {
                         fillChannels();
@@ -1739,64 +1805,69 @@ public class HomeActivity extends Activity {
                     }
                     showLauncherSettings();
                 })
-                .row("Open on start", () -> {
+                .row("Mở khi khởi động", () -> {
                     String startApp = prefs.startApp();
-                    return startApp != null && launchIntent(startApp) != null ? String.valueOf(appLabel(startApp)) : "Off";
+                    return startApp != null && launchIntent(startApp) != null ? String.valueOf(appLabel(startApp)) : "Tắt";
                 }, this::chooseStartApp));
-        out.add(new ManagerPage.Section("Apps")
-                .row("Hidden apps", () -> prefs.hidden().isEmpty() ? "None" : String.valueOf(prefs.hidden().size()), this::chooseHiddenApps)
-                .row("Folders", () -> {
+        out.add(new ManagerPage.Section("Ứng dụng")
+                .row("Ứng dụng đã ẩn", () -> prefs.hidden().isEmpty() ? "Không có" : String.valueOf(prefs.hidden().size()), this::chooseHiddenApps)
+                .row("Thư mục", () -> {
                     int n = prefs.folders().size();
-                    return n == 0 ? "None" : n + (n == 1 ? " folder" : " folders");
+                    return n == 0 ? "Không có" : n + (n == 1 ? " thư mục" : " thư mục");
                 }, this::manageFolders)
-                .row("Apps per row", () -> String.valueOf(prefs.columns()), () -> {
+                .row("Số ứng dụng mỗi hàng", () -> String.valueOf(prefs.columns()), () -> {
                     int next = prefs.columns() + 1;
                     prefs.setColumns(next > Prefs.MAX_COLUMNS ? Prefs.MIN_COLUMNS : next);
                     showLauncherSettings();
                 }));
-        out.add(new ManagerPage.Section("Clock & weather")
-                .row("Clock", () -> new String[]{"Follow TV", "12-hour", "24-hour"}[prefs.clockMode()], () -> {
+        out.add(new ManagerPage.Section("Đồng hồ và thời tiết")
+                .row("Đồng hồ", () -> new String[]{"Theo thiết bị", "12 giờ", "24 giờ"}[prefs.clockMode()], () -> {
                     prefs.setClockMode((prefs.clockMode() + 1) % 3);
                     handler.removeCallbacks(tick);
                     handler.post(tick);
                     showLauncherSettings();
                 })
-                .row("Weather", () -> !prefs.weatherOn() ? "Off" : prefs.weatherManual() ? prefs.weatherCity()
-                        : "My location" + (prefs.weatherCity().isEmpty() ? "" : " · " + prefs.weatherCity().split(",")[0]), this::showWeatherSettings)
-                .row("Units", () -> prefs.fahrenheit() ? "°F" : "°C", () -> {
+                .row("Thời tiết", () -> !prefs.weatherOn() ? "Tắt" : prefs.weatherManual() ? prefs.weatherCity()
+                        : "Vị trí của tôi" + (prefs.weatherCity().isEmpty() ? "" : " · " + prefs.weatherCity().split(",")[0]), this::showWeatherSettings)
+                .row("Đơn vị nhiệt độ", () -> prefs.fahrenheit() ? "°F" : "°C", () -> {
                     prefs.setFahrenheit(!prefs.fahrenheit());
                     showWeather();
                     showLauncherSettings();
                 }));
-        out.add(new ManagerPage.Section("Screensaver")
-                .row("Screensaver photos", () -> new String[]{"Off", "Online (needs the internet)", "Wallpapers (offline)"}[prefs.photosMode()], () -> {
+        out.add(new ManagerPage.Section("Bảo vệ màn hình")
+                .row("Ảnh bảo vệ màn hình", () -> new String[]{"Tắt", "Ảnh trực tuyến (cần mạng)", "Ảnh nền có sẵn (ngoại tuyến)"}[prefs.photosMode()], () -> {
                     prefs.setPhotosMode((prefs.photosMode() + 1) % 3);
                     showLauncherSettings();
                 }));
-        out.add(new ManagerPage.Section("Data")
-                .row("Recently played", () -> String.valueOf(prefs.recent().size()), () -> {
+        out.add(new ManagerPage.Section("Dữ liệu")
+                .row("Nội dung đã phát", () -> String.valueOf(prefs.recent().size()), () -> {
                     if (prefs.recent().isEmpty()) return;
                     new AlertDialog.Builder(this)
-                            .setTitle("Clear recently played?")
-                            .setMessage("The Continue row and tab forget what you played on this TV.")
-                            .setPositiveButton("Clear", (d, w) -> {
+                            .setTitle("Xóa lịch sử phát?")
+                            .setMessage("Xóa lịch sử phát đã lưu trên thiết bị khỏi mục Tiếp tục xem.")
+                            .setPositiveButton("Xóa", (d, w) -> {
                                 prefs.clearRecent();
+                                RecentArtwork.prune(this);
+                                posters.clear();
+                                heroPosters.clear();
                                 fillHomeContinue();
                                 showLauncherSettings();
                             })
-                            .setNegativeButton("Cancel", null)
+                            .setNegativeButton("Hủy", null)
                             .show();
                 })
-                .row("Reset launcher settings", null, this::confirmReset));
+                .row("Đặt lại cài đặt giao diện", null, this::confirmReset));
         return out;
     }
 
     private void confirmReset() {
         new AlertDialog.Builder(this)
-                .setTitle("Reset launcher settings?")
-                .setMessage("Animations, apps per row, wallpaper, colors, clock, weather, photos, the Continue tab and the start app go back to how they came. Pinned, hidden apps and folders stay.")
-                .setPositiveButton("Reset", (d, w) -> {
+                .setTitle("Đặt lại cài đặt giao diện?")
+                .setMessage("Khôi phục mặc định cho hiệu ứng, số cột, ảnh nền, màu sắc, đồng hồ, thời tiết, bảo vệ màn hình, mục Tiếp tục xem và ứng dụng khởi động. Giữ lại ứng dụng ghim, ứng dụng ẩn và thư mục.")
+                .setPositiveButton("Đặt lại", (d, w) -> {
                     prefs.resetSettings();
+                    RecentArtwork.prune(this);
+                    Motion.setReduced(prefs.reducedMotion());
                     applyColorTheme();
                     wallpaperChanged(true);
                     drifting = true;
@@ -1813,7 +1884,7 @@ public class HomeActivity extends Activity {
                     fillHomeContinue();
                     showLauncherSettings();
                 })
-                .setNegativeButton("Cancel", null)
+                .setNegativeButton("Hủy", null)
                 .show();
     }
 
@@ -1843,26 +1914,26 @@ public class HomeActivity extends Activity {
         boolean[] checked = new boolean[pkgs.size()];
         for (int i = 0; i < pkgs.size(); i++) checked[i] = pinned.contains(pkgs.get(i));
         new AlertDialog.Builder(this)
-                .setTitle("Dock apps (up to " + DOCK_SIZE + "; the rest follows use)")
+                .setTitle("Chọn tối đa " + DOCK_SIZE + " ứng dụng; chỗ trống xếp theo mức sử dụng")
                 .setMultiChoiceItems(apps.values().toArray(new String[0]), checked, (d, which, on) -> checked[which] = on)
-                .setPositiveButton("Save", (d, w) -> {
+                .setPositiveButton("Lưu", (d, w) -> {
                     List<String> next = new ArrayList<>();
                     for (String p : pinned) if (pkgs.contains(p) && checked[pkgs.indexOf(p)]) next.add(p);
                     for (int i = 0; i < pkgs.size(); i++) if (checked[i] && !next.contains(pkgs.get(i))) next.add(pkgs.get(i));
                     if (next.size() > DOCK_SIZE) {
                         next = new ArrayList<>(next.subList(0, DOCK_SIZE));
-                        Toast.makeText(this, "The dock holds " + DOCK_SIZE + " apps: the first " + DOCK_SIZE + " were kept.", Toast.LENGTH_LONG).show();
+                        Toast.makeText(this, "Thanh ứng dụng chứa tối đa " + DOCK_SIZE + " ứng dụng: đã giữ lại " + DOCK_SIZE + " ứng dụng đầu tiên.", Toast.LENGTH_LONG).show();
                     }
                     prefs.setPinned(next);
                     refreshApps();
                     showLauncherSettings();
                 })
-                .setNeutralButton("Clear", (d, w) -> {
+                .setNeutralButton("Xóa", (d, w) -> {
                     prefs.setPinned(new ArrayList<>());
                     refreshApps();
                     showLauncherSettings();
                 })
-                .setNegativeButton("Cancel", null)
+                .setNegativeButton("Hủy", null)
                 .show();
     }
 
@@ -1873,16 +1944,16 @@ public class HomeActivity extends Activity {
         boolean[] checked = new boolean[pkgs.size()];
         for (int i = 0; i < pkgs.size(); i++) checked[i] = hidden.contains(pkgs.get(i));
         new AlertDialog.Builder(this)
-                .setTitle("Hidden apps (they stay installed)")
+                .setTitle("Ẩn ứng dụng (không gỡ cài đặt)")
                 .setMultiChoiceItems(apps.values().toArray(new String[0]), checked, (d, which, on) -> checked[which] = on)
-                .setPositiveButton("Save", (d, w) -> {
+                .setPositiveButton("Lưu", (d, w) -> {
                     Set<String> next = new java.util.HashSet<>();
                     for (int i = 0; i < pkgs.size(); i++) if (checked[i]) next.add(pkgs.get(i));
                     prefs.setHidden(next);
                     refreshApps();
                     showLauncherSettings();
                 })
-                .setNegativeButton("Cancel", null)
+                .setNegativeButton("Hủy", null)
                 .show();
     }
 
@@ -1891,10 +1962,10 @@ public class HomeActivity extends Activity {
         List<String> names = new ArrayList<>(folders.keySet());
         Collections.sort(names, String::compareToIgnoreCase);
         String[] labels = new String[names.size() + 1];
-        labels[0] = "New folder…";
+        labels[0] = "Tạo thư mục…";
         for (int i = 0; i < names.size(); i++) labels[i + 1] = names.get(i) + " (" + folders.get(names.get(i)).size() + ")";
         new AlertDialog.Builder(this)
-                .setTitle("Folders")
+                .setTitle("Thư mục")
                 .setItems(labels, (d, which) -> {
                     if (which == 0) askFolderName();
                     else editFolder(names.get(which - 1));
@@ -1905,16 +1976,16 @@ public class HomeActivity extends Activity {
     private void askFolderName() {
         EditText input = new EditText(this);
         input.setSingleLine(true);
-        input.setHint("Folder name");
+        input.setHint("Tên thư mục");
         input.setImeOptions(EditorInfo.IME_ACTION_DONE);
         new AlertDialog.Builder(this)
-                .setTitle("New folder")
+                .setTitle("Tạo thư mục")
                 .setView(input)
-                .setPositiveButton("Next", (d, w) -> {
+                .setPositiveButton("Tiếp tục", (d, w) -> {
                     String name = input.getText().toString().trim().replace(",", " ");
                     if (!name.isEmpty()) editFolder(name);
                 })
-                .setNegativeButton("Cancel", null)
+                .setNegativeButton("Hủy", null)
                 .show();
     }
 
@@ -1927,9 +1998,9 @@ public class HomeActivity extends Activity {
         boolean[] checked = new boolean[pkgs.size()];
         for (int i = 0; i < pkgs.size(); i++) checked[i] = in.contains(pkgs.get(i));
         AlertDialog.Builder b = new AlertDialog.Builder(this)
-                .setTitle("Apps in “" + name + "”")
+                .setTitle("Ứng dụng trong “" + name + "”")
                 .setMultiChoiceItems(apps.values().toArray(new String[0]), checked, (d, which, on) -> checked[which] = on)
-                .setPositiveButton("Save", (d, w) -> {
+                .setPositiveButton("Lưu", (d, w) -> {
                     Map<String, List<String>> all = prefs.folders();
                     List<String> chosen = new ArrayList<>();
                     for (int i = 0; i < pkgs.size(); i++) if (checked[i]) chosen.add(pkgs.get(i));
@@ -1940,8 +2011,8 @@ public class HomeActivity extends Activity {
                     refreshApps();
                     showLauncherSettings();
                 })
-                .setNegativeButton("Cancel", null);
-        if (folders.containsKey(name)) b.setNeutralButton("Delete folder", (d, w) -> {
+                .setNegativeButton("Hủy", null);
+        if (folders.containsKey(name)) b.setNeutralButton("Xóa thư mục", (d, w) -> {
             Map<String, List<String>> all = prefs.folders();
             all.remove(name);
             prefs.setFolders(all);
@@ -1971,10 +2042,10 @@ public class HomeActivity extends Activity {
         }
         Collections.sort(pkgs, (a, b) -> names.get(a).compareToIgnoreCase(names.get(b)));
         String[] labels = new String[pkgs.size() + 1];
-        labels[0] = "Off (open Home)";
+        labels[0] = "Tắt (mở trang chủ)";
         for (int i = 0; i < pkgs.size(); i++) labels[i + 1] = names.get(pkgs.get(i));
         new AlertDialog.Builder(this)
-                .setTitle("Open on start")
+                .setTitle("Mở khi khởi động")
                 .setItems(labels, (d, which) -> {
                     prefs.setStartApp(which == 0 ? null : pkgs.get(which - 1));
                     showLauncherSettings();
@@ -2031,7 +2102,7 @@ public class HomeActivity extends Activity {
         List<String> items = new ArrayList<>();
         List<Runnable> actions = new ArrayList<>();
         if (!prefs.weatherOn()) {
-            items.add("Turn weather on (find my location)");
+            items.add("Bật thời tiết (tự tìm vị trí)");
             actions.add(() -> {
                 prefs.setWeatherOn(true);
                 showWeather();
@@ -2039,25 +2110,25 @@ public class HomeActivity extends Activity {
             });
         }
         String where = prefs.weatherManual() ? prefs.weatherCity()
-                : "My location" + (prefs.weatherKnown() && !prefs.weatherCity().isEmpty() ? " (" + prefs.weatherCity() + ")" : "");
-        items.add("City: " + (prefs.weatherOn() ? where : "off") + " (type a city)");
+                : "Vị trí của tôi" + (prefs.weatherKnown() && !prefs.weatherCity().isEmpty() ? " (" + prefs.weatherCity() + ")" : "");
+        items.add("Thành phố: " + (prefs.weatherOn() ? where : "đang tắt") + " (nhập tên thành phố)");
         actions.add(this::askWeatherCity);
         if (prefs.weatherManual()) {
-            items.add("Use my location instead");
+            items.add("Dùng vị trí của tôi");
             actions.add(() -> {
                 prefs.useAutoPlace();
                 showWeather();
                 showWeatherSettings();
             });
         }
-        items.add("Units: " + (prefs.fahrenheit() ? "°F" : "°C"));
+        items.add("Đơn vị: " + (prefs.fahrenheit() ? "°F" : "°C"));
         actions.add(() -> {
             prefs.setFahrenheit(!prefs.fahrenheit());
             showWeather();
             showWeatherSettings();
         });
         if (prefs.weatherOn()) {
-            items.add("Turn weather off");
+            items.add("Tắt thời tiết");
             actions.add(() -> {
                 prefs.setWeatherOn(false);
                 showWeather();
@@ -2065,7 +2136,7 @@ public class HomeActivity extends Activity {
             });
         }
         new AlertDialog.Builder(this)
-                .setTitle("Weather (needs the internet)")
+                .setTitle("Thời tiết (cần kết nối mạng)")
                 .setItems(items.toArray(new String[0]), (d, which) -> actions.get(which).run())
                 .show();
     }
@@ -2073,26 +2144,26 @@ public class HomeActivity extends Activity {
     private void askWeatherCity() {
         EditText input = new EditText(this);
         input.setSingleLine(true);
-        input.setHint("City name");
+        input.setHint("Tên thành phố");
         input.setImeOptions(EditorInfo.IME_ACTION_DONE);
         new AlertDialog.Builder(this)
-                .setTitle("Weather for which city?")
+                .setTitle("Xem thời tiết ở đâu?")
                 .setView(input)
-                .setPositiveButton("Search", (d, w) -> {
+                .setPositiveButton("Tìm kiếm", (d, w) -> {
                     String query = input.getText().toString().trim();
                     if (query.isEmpty()) return;
                     Weather.findCity(handler, query, place -> {
                         if (place == null) {
-                            Toast.makeText(this, "City not found. Check the name and the internet connection.", Toast.LENGTH_LONG).show();
+                            Toast.makeText(this, "Không tìm thấy thành phố. Hãy kiểm tra tên và kết nối mạng.", Toast.LENGTH_LONG).show();
                         } else {
                             prefs.setWeatherPlace(place.name, place.lat, place.lon);
                             showWeather();
-                            Toast.makeText(this, "Weather for " + place.name, Toast.LENGTH_SHORT).show();
+                            Toast.makeText(this, "Thời tiết tại " + place.name, Toast.LENGTH_SHORT).show();
                         }
                         showWeatherSettings();
                     });
                 })
-                .setNegativeButton("Cancel", null)
+                .setNegativeButton("Hủy", null)
                 .show();
     }
 
@@ -2106,6 +2177,77 @@ public class HomeActivity extends Activity {
     private boolean showingContinue;
     private static final int POSTER_DP = 230, HOME_POSTER_DP = 180, HOME_CONTINUE_MAX = 8;
     private static final int REQUEST_WATCH_NEXT = 7;
+    private int homeContinueRequest, continueRequest;
+    private boolean observingContinue, observingPackages;
+    private String homeContinueKey = "", continueKey = "";
+    private boolean focusContinueOnRefresh;
+    private final Runnable refreshContinueContent = () -> {
+        if (!HomeActivity.this.foreground || !prefs.continueOn()) return;
+        if (showingContinue) refreshContinue();
+        else if (!showingApps) fillHomeContinue();
+    };
+    private final android.database.ContentObserver continueObserver = new android.database.ContentObserver(handler) {
+        @Override public void onChange(boolean selfChange) { scheduleContinueRefresh(); }
+        @Override public void onChange(boolean selfChange, Uri uri) { scheduleContinueRefresh(); }
+    };
+    private final android.content.BroadcastReceiver removedPackageReceiver = new android.content.BroadcastReceiver() {
+        @Override public void onReceive(android.content.Context context, Intent intent) {
+            if (intent.getBooleanExtra(Intent.EXTRA_REPLACING, false) || intent.getData() == null) return;
+            prefs.removeRecentPackage(intent.getData().getSchemeSpecificPart());
+            RecentArtwork.prune(HomeActivity.this);
+            scheduleContinueRefresh();
+        }
+    };
+
+    private void scheduleContinueRefresh() {
+        handler.removeCallbacks(refreshContinueContent);
+        if (foreground && prefs.continueOn()) handler.postDelayed(refreshContinueContent, 150);
+    }
+
+    private void updateContinueObservers() {
+        stopContinueObservers();
+        if (!foreground || !prefs.continueOn()) return;
+        if (checkSelfPermission(WatchNext.PERMISSION) == PackageManager.PERMISSION_GRANTED) {
+            try {
+                getContentResolver().registerContentObserver(android.media.tv.TvContract.WatchNextPrograms.CONTENT_URI,
+                        true, continueObserver);
+                observingContinue = true;
+            } catch (RuntimeException ignored) { }
+        }
+        android.content.IntentFilter filter = new android.content.IntentFilter(Intent.ACTION_PACKAGE_REMOVED);
+        filter.addDataScheme("package");
+        if (android.os.Build.VERSION.SDK_INT >= 33) registerReceiver(removedPackageReceiver, filter, android.content.Context.RECEIVER_EXPORTED);
+        else registerReceiver(removedPackageReceiver, filter);
+        observingPackages = true;
+    }
+
+    private void stopContinueObservers() {
+        handler.removeCallbacks(refreshContinueContent);
+        if (observingContinue) getContentResolver().unregisterContentObserver(continueObserver);
+        if (observingPackages) unregisterReceiver(removedPackageReceiver);
+        observingContinue = observingPackages = false;
+    }
+
+    private String continueListKey(List<WatchNext.Item> items) {
+        StringBuilder key = new StringBuilder().append(palette.seed);
+        for (WatchNext.Item item : items) key.append('|').append(WatchNext.key(item)).append('|').append(item.poster)
+                .append('|').append(item.position).append('|').append(item.duration).append('|').append(item.subtitle)
+                .append('|').append(item.intentUri).append('|').append(item.programId);
+        return key.toString();
+    }
+
+    private String focusedContinueKey(LinearLayout row) {
+        for (int i = 0; i < row.getChildCount(); i++) if (row.getChildAt(i).hasFocus()) return (String) row.getChildAt(i).getTag();
+        return null;
+    }
+
+    private void restoreContinueFocus(LinearLayout row, String key, int fallback) {
+        for (int i = 0; i < row.getChildCount(); i++) if (key != null && key.equals(row.getChildAt(i).getTag())) {
+            row.getChildAt(i).requestFocus();
+            return;
+        }
+        if (row.getChildCount() > 0) row.getChildAt(Math.min(fallback, row.getChildCount() - 1)).requestFocus();
+    }
     private final Map<String, Bitmap> posters = new java.util.LinkedHashMap<String, Bitmap>(16, 0.75f, true) {
         @Override protected boolean removeEldestEntry(Map.Entry<String, Bitmap> eldest) {
             return size() > 12;
@@ -2113,6 +2255,7 @@ public class HomeActivity extends Activity {
     };
 
     private void applyContinueTab() {
+        updateContinueObservers();
         nav.button(2).setVisibility(prefs.continueOn() ? View.VISIBLE : View.GONE);
     }
 
@@ -2120,14 +2263,14 @@ public class HomeActivity extends Activity {
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
         page.setClipChildren(false);
-        continueTitle = text("Continue watching", 34, palette.onSurface, 760);
+        continueTitle = text("Tiếp tục xem", 34, palette.onSurface, 760);
         continueTitle.setPadding(dp(4), dp(28), 0, dp(8));
         page.addView(continueTitle);
         continueMessage = text("", 18, palette.onSurfaceVariant, 500);
         continueMessage.setPadding(dp(4), dp(12), dp(40), dp(12));
         continueMessage.setVisibility(View.GONE);
         page.addView(continueMessage);
-        continueAllow = text("Allow access", 16, palette.onPrimary, 600);
+        continueAllow = text("Cấp quyền", 16, palette.onPrimary, 600);
         continueAllow.setGravity(Gravity.CENTER);
         continueAllow.setPadding(dp(24), dp(12), dp(24), dp(12));
         continueAllow.setFocusable(true);
@@ -2162,6 +2305,7 @@ public class HomeActivity extends Activity {
 
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_WATCH_NEXT) updateContinueObservers();
         if (requestCode == REQUEST_WATCH_NEXT && showingContinue) refreshContinue();
     }
 
@@ -2176,48 +2320,58 @@ public class HomeActivity extends Activity {
         continuePage.setVisibility(View.VISIBLE);
         nav.select(2);
         if (nowCard != null) nowCard.setVisibility(View.GONE);
+        focusContinueOnRefresh = true;
         refreshContinue();
     }
 
     private void refreshContinue() {
+        final int request = ++continueRequest;
         boolean granted = checkSelfPermission(WatchNext.PERMISSION) == PackageManager.PERMISSION_GRANTED;
         Set<String> skip = new java.util.HashSet<>(prefs.hidden());
         skip.add(getPackageName());
-        List<WatchNext.Item> played = prefs.recent();
         if (!granted) {
-            showContinueRow(WatchNext.merge(null, played, skip), false);
+            showContinueRow(WatchNext.merge(null, prefs.recent(), skip), false);
             return;
         }
         WatchNext.load(handler, getContentResolver(), skip, items -> {
-            if (showingContinue) showContinueRow(WatchNext.merge(items, played, skip), true);
+            if (foreground && showingContinue && prefs.continueOn() && request == continueRequest)
+                showContinueRow(WatchNext.merge(items, prefs.recent(), skip), true);
         });
     }
 
     /** The row under the dock: the same items as the Continue tab, while that tab is on and there is something in it. */
     private void fillHomeContinue() {
+        final int request = ++homeContinueRequest;
         if (!prefs.continueOn()) {
             homeContinue.setVisibility(View.GONE);
             homeContinueRow.removeAllViews();
+            homeContinueKey = "";
             return;
         }
         Set<String> skip = new java.util.HashSet<>(prefs.hidden());
         skip.add(getPackageName());
-        List<WatchNext.Item> played = prefs.recent();
         if (checkSelfPermission(WatchNext.PERMISSION) == PackageManager.PERMISSION_GRANTED) {
-            WatchNext.load(handler, getContentResolver(), skip, items -> showHomeContinue(WatchNext.merge(items, played, skip)));
+            WatchNext.load(handler, getContentResolver(), skip, items -> {
+                if (foreground && prefs.continueOn() && request == homeContinueRequest)
+                    showHomeContinue(WatchNext.merge(items, prefs.recent(), skip));
+            });
         } else {
-            showHomeContinue(WatchNext.merge(null, played, skip));
+            showHomeContinue(WatchNext.merge(null, prefs.recent(), skip));
         }
     }
 
     private void showHomeContinue(List<WatchNext.Item> list) {
         boolean keepFocus = homeContinueRow.hasFocus();
-        homeContinueRow.removeAllViews();
+        String focused = focusedContinueKey(homeContinueRow);
         List<WatchNext.Item> shown = new ArrayList<>();
-        for (WatchNext.Item item : list) {
+        for (WatchNext.Item item : prefs.visibleContinue(list)) {
             if (shown.size() >= HOME_CONTINUE_MAX) break;
             if (launchIntent(item.pkg) != null) shown.add(item);
         }
+        String key = continueListKey(shown);
+        if (key.equals(homeContinueKey)) return;
+        homeContinueKey = key;
+        homeContinueRow.removeAllViews();
         for (int i = 0; i < shown.size(); i++) {
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             if (i > 0) lp.setMarginStart(dp(GAP));
@@ -2225,13 +2379,26 @@ public class HomeActivity extends Activity {
         }
         homeContinue.setVisibility(shown.isEmpty() ? View.GONE : View.VISIBLE);
         homeScroll.requestLayout();   // the peek appears or goes: the upper part's height follows
-        if (keepFocus && !shown.isEmpty()) homeContinueRow.getChildAt(0).requestFocus();
+        if (keepFocus) {
+            if (!shown.isEmpty()) restoreContinueFocus(homeContinueRow, focused, 0);
+            else if (dock.getChildCount() > 0) dock.getChildAt(0).requestFocus();
+        }
     }
 
     private void showContinueRow(List<WatchNext.Item> list, boolean granted) {
-        continueRow.removeAllViews();
+        boolean keepFocus = continueRow.hasFocus();
+        String focused = focusedContinueKey(continueRow);
+        boolean focusContent = focusContinueOnRefresh || keepFocus;
+        focusContinueOnRefresh = false;
         List<WatchNext.Item> shown = new ArrayList<>();
-        for (WatchNext.Item item : list) if (launchIntent(item.pkg) != null) shown.add(item);   // not uninstalled since
+        for (WatchNext.Item item : prefs.visibleContinue(list)) if (launchIntent(item.pkg) != null) shown.add(item);
+        String key = granted + continueListKey(shown);
+        if (key.equals(continueKey)) {
+            if (focusContent) restoreContinueFocus(continueRow, focused, 0);
+            return;
+        }
+        continueKey = key;
+        continueRow.removeAllViews();
         heroItem = null;
         for (int i = 0; i < shown.size(); i++) {
             WatchNext.Item item = shown.get(i);
@@ -2243,17 +2410,20 @@ public class HomeActivity extends Activity {
         boolean empty = continueRow.getChildCount() == 0;
         heroBox.setVisibility(empty ? View.GONE : View.VISIBLE);
         continueTitle.setVisibility(empty ? View.VISIBLE : View.GONE);
-        String offered = "Allow access to also list what your apps offer under Continue watching.";
+        String offered = "Cấp quyền để mục Tiếp tục xem hiển thị thêm nội dung từ các ứng dụng.";
         if (empty) {
-            continueMessage.setText("Nothing to continue yet. What you play on this TV shows up here"
-                    + (granted ? "; apps that publish to Continue watching add theirs." : ". " + offered));
+            continueMessage.setText("Chưa có nội dung để xem tiếp. Nội dung bạn phát trên thiết bị sẽ xuất hiện ở đây"
+                    + (granted ? "; các ứng dụng hỗ trợ cũng có thể bổ sung nội dung." : ". " + offered));
         } else {
             continueMessage.setText(offered);
         }
         continueMessage.setVisibility(empty || !granted ? View.VISIBLE : View.GONE);
         continueAllow.setVisibility(granted ? View.GONE : View.VISIBLE);
-        if (!empty) continueRow.getChildAt(0).requestFocus();
-        else if (!granted) continueAllow.requestFocus();
+        if (!empty && focusContent) restoreContinueFocus(continueRow, focused, 0);
+        else if (empty && focusContent) {
+            if (!granted) continueAllow.requestFocus();
+            else nav.button(2).requestFocus();
+        }
     }
 
     private void launchContinue(WatchNext.Item item) {
@@ -2266,17 +2436,37 @@ public class HomeActivity extends Activity {
         if (deep != null) launch(deep);
     }
 
+    private void showContinueMenu(WatchNext.Item item) {
+        new AlertDialog.Builder(this).setTitle(item.title)
+                .setItems(new String[]{"Mở nội dung", "Ẩn khỏi Xem tiếp"}, (dialog, which) -> {
+                    if (which == 0) {
+                        launchContinue(item);
+                        return;
+                    }
+                    prefs.dismissContinue(item);
+                    RecentArtwork.prune(this);
+                    fillHomeContinue();
+                    if (showingContinue) refreshContinue();
+                    if (item.programId >= 0) WatchNext.remove(handler, getContentResolver(), item.programId, removed -> {
+                        if (foreground) Toast.makeText(this, removed ? "Đã xóa khỏi Xem tiếp" : "Đã ẩn trên launcher", Toast.LENGTH_SHORT).show();
+                    });
+                }).show();
+    }
+
     // What was played, kept for the Continue tab (only while that tab is on; never leaves the TV).
     private long recordedAt;
     private int recordedState = -1;
     private String recordedItem;
+    private Bitmap savedRecentArt;
+    private String savedRecentArtItem;
 
     private void recordRecent(boolean force) {
         if (!prefs.continueOn() || lastItem == null || lastPkg == null || lastTitle == null || lastTitle.length() == 0) return;
         if (lastPkg.equals(getPackageName())) return;
         long now = System.currentTimeMillis();
         boolean changed = !lastItem.equals(recordedItem) || lastState != recordedState;
-        if (!force && !changed && now - recordedAt < 30_000) return;
+        boolean newArt = lastArt != null && (lastArt != savedRecentArt || !lastItem.equals(savedRecentArtItem));
+        if (!force && !changed && !newArt && now - recordedAt < 30_000) return;
         recordedItem = lastItem;
         recordedState = lastState;
         recordedAt = now;
@@ -2286,11 +2476,28 @@ public class HomeActivity extends Activity {
         it.subtitle = lastArtist != null ? lastArtist.toString() : "";
         it.mediaId = lastMediaId;
         it.mediaUri = lastMediaUri;
-        it.position = rememberedPosition();
+        it.poster = lastPoster;
+        it.position = lastPosition < 0 ? -1 : rememberedPosition();
         it.duration = lastDuration;
         it.engaged = now;
         it.recent = true;
         prefs.addRecent(it);
+        if (newArt) {
+            savedRecentArt = lastArt;
+            savedRecentArtItem = lastItem;
+            String address = RecentArtwork.address(it.pkg, it.title);
+            RecentArtwork.save(this, handler, address, lastArt, saved -> {
+                if (!saved && it.pkg.equals(lastPkg) && it.title.contentEquals(lastTitle != null ? lastTitle : "")) {
+                    savedRecentArt = null;
+                }
+                if (saved && prefs.setRecentPoster(it.pkg, it.title, address) && foreground && prefs.continueOn()) {
+                    fillHomeContinue();
+                    if (showingContinue) refreshContinue();
+                }
+            });
+        } else {
+            RecentArtwork.prune(this);
+        }
     }
 
     // The focused item, large: its poster as a backdrop under a scrim, the title, where you were, and which of the row it is.
@@ -2320,7 +2527,7 @@ public class HomeActivity extends Activity {
         words.setOrientation(LinearLayout.VERTICAL);
         words.setGravity(Gravity.CENTER_VERTICAL);
         words.setPadding(dp(28), dp(12), dp(28), dp(12));
-        heroKicker = text("Continue watching", 13, palette.primary, 650);
+        heroKicker = text("Tiếp tục xem", 13, palette.primary, 650);
         heroTitle = text("", 26, palette.onSurface, 700);
         heroTitle.setSingleLine(true);
         heroTitle.setEllipsize(TextUtils.TruncateAt.END);
@@ -2352,6 +2559,17 @@ public class HomeActivity extends Activity {
         return s >= 3600 ? String.format(Locale.US, "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String.format(Locale.US, "%d:%02d", s / 60, s % 60);
     }
 
+    private static String playbackLabel(WatchNext.Item item) {
+        if (item.position < 0) return "Chưa có tiến trình";
+        if (item.duration > 0) return minutes(item.position) + " / " + minutes(item.duration);
+        return item.position > 0 ? "Đã xem " + minutes(item.position) : "Chưa có tiến trình";
+    }
+
+    private void loadPoster(String address, Weather.Callback<Bitmap> callback) {
+        if (address.startsWith(RecentArtwork.PREFIX)) RecentArtwork.load(this, handler, address, callback);
+        else Photos.image(handler, getContentResolver(), address, dp(380), callback);
+    }
+
     private void showHero(WatchNext.Item item, int index, int count, Drawable icon) {
         boolean sameItem = heroItem == item;
         heroItem = item;
@@ -2360,10 +2578,7 @@ public class HomeActivity extends Activity {
         heroTitle.setText(item.title);
         StringBuilder sub = new StringBuilder(String.valueOf(appLabel(item.pkg)));
         if (item.subtitle != null && !item.subtitle.isEmpty()) sub.append(" · ").append(item.subtitle);
-        if (item.position > 0) {
-            sub.append("  ·  ").append(minutes(item.position));
-            if (item.duration > 0) sub.append(" / ").append(minutes(item.duration));
-        }
+        sub.append("  ·  ").append(playbackLabel(item));
         heroSub.setText(sub);
         Bitmap poster = item.poster != null ? posters.get(item.poster) : null;
         if (poster != null) {
@@ -2377,7 +2592,7 @@ public class HomeActivity extends Activity {
         }
         if (!sameItem) {
             heroImage.setAlpha(0f);
-            heroImage.animate().alpha(1f).setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.FAST_EFFECTS_MS).start();
+            heroImage.animate().alpha(1f).setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.duration(Motion.FAST_EFFECTS_MS)).start();
         }
         if (heroDots.getChildCount() != count) {
             heroDots.removeAllViews();
@@ -2407,6 +2622,7 @@ public class HomeActivity extends Activity {
         int h = w * 9 / 16;
         int radius = dp(Focus.MEDIA);
         LinearLayout holder = new LinearLayout(this);
+        holder.setTag(WatchNext.key(item));
         holder.setOrientation(LinearLayout.VERTICAL);
         holder.setClipChildren(false);
 
@@ -2419,11 +2635,9 @@ public class HomeActivity extends Activity {
         card.setBackground(cardShape);
         card.setClipToOutline(true);
         ImageView image = new ImageView(this);
-        image.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        if (item.poster == null) {                      // played here: no poster, so the app's icon, whole, on the tile
-            image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            image.setPadding(dp(40), dp(24), dp(40), dp(24));
-        }
+        // Keep the fallback icon whole until a real poster has loaded successfully.
+        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        image.setPadding(dp(40), dp(24), dp(40), dp(24));
         card.addView(image, match());
         Drawable appArt = null;
         try {
@@ -2435,13 +2649,23 @@ public class HomeActivity extends Activity {
         if (item.poster != null) {
             Bitmap known = posters.get(item.poster);
             if (known != null) {
+                image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                image.setPadding(0, 0, 0, 0);
                 image.setImageBitmap(known);
             } else {
-                Photos.image(handler, getContentResolver(), item.poster, dp(380), bitmap -> {
+                loadPoster(item.poster, bitmap -> {
                     if (bitmap == null) return;
                     posters.put(item.poster, bitmap);
+                    image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                    image.setPadding(0, 0, 0, 0);
                     image.setImageBitmap(bitmap);
                     if (onHome) heroPosters.put("watch:" + item.pkg + "|" + item.title, bitmap);
+                    if (item.recent && !item.poster.startsWith(RecentArtwork.PREFIX)) {
+                        String address = RecentArtwork.address(item.pkg, item.title);
+                        RecentArtwork.save(this, handler, address, bitmap, saved -> {
+                            if (saved) prefs.setRecentPoster(item.pkg, item.title, address);
+                        });
+                    }
                     if (heroItem == item) showHero(item, heroIndex, heroCount, appArtFor(item.pkg));
                 });
             }
@@ -2456,7 +2680,7 @@ public class HomeActivity extends Activity {
             card.addView(track, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(5), Gravity.BOTTOM));
         }
         String label = String.valueOf(appLabel(item.pkg));
-        card.setContentDescription(item.title + ", " + label);
+        card.setContentDescription(item.title + ", " + label + ", " + playbackLabel(item));
 
         GradientDrawable ring = new GradientDrawable();
         ring.setCornerRadius(radius + dp(RING));
@@ -2467,19 +2691,19 @@ public class HomeActivity extends Activity {
         ringFrame.setBackground(ring);
         ringFrame.addView(card, new FrameLayout.LayoutParams(w, h));
         card.setOnClickListener(v -> launchContinue(item));
+        card.setOnLongClickListener(v -> {
+            showContinueMenu(item);
+            return true;
+        });
         card.setOnFocusChangeListener((v, focused) -> {
             float scale = focused ? 1.10f : 1f;
             ringFrame.animate().scaleX(scale).scaleY(scale)
-                    .setInterpolator(Motion.FAST_SPATIAL).setDuration(Motion.FAST_SPATIAL_MS).start();
+                    .setInterpolator(Motion.FAST_SPATIAL).setDuration(Motion.duration(Motion.FAST_SPATIAL_MS)).start();
             card.setOutlineSpotShadowColor(palette.primary);
             card.setOutlineAmbientShadowColor(palette.primary);
             card.animate().translationZ(focused ? dp(14) : 0)
-                    .setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.DEFAULT_EFFECTS_MS).start();
-            ObjectAnimator corners = ObjectAnimator.ofFloat(cardShape, "cornerRadius", cardShape.getCornerRadius(), focused ? radius * 0.62f : radius)
-                    .setDuration(Motion.FAST_SPATIAL_MS);
-            corners.setInterpolator(Motion.FAST_SPATIAL);
-            corners.start();
-            ring.setCornerRadius((focused ? radius * 0.62f : radius) + dp(RING));
+                    .setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.duration(Motion.DEFAULT_EFFECTS_MS)).start();
+            animateCorners(cardShape, ring, focused ? radius * 0.62f : radius);
             fadeRing(ring, focused);
             if (focused) {
                 String key = "watch:" + item.pkg + "|" + item.title;
@@ -2501,9 +2725,19 @@ public class HomeActivity extends Activity {
         name.setPadding(dp(RING), dp(8), dp(RING), 0);
         holder.addView(name, new LinearLayout.LayoutParams(w + dp(2 * RING), ViewGroup.LayoutParams.WRAP_CONTENT));
         TextView from = text(label + (item.subtitle != null && !item.subtitle.isEmpty() ? " · " + item.subtitle : ""), 13, palette.onSurfaceVariant, 500);
+        if (fallback != null && fallback.getConstantState() != null) {
+            Drawable sourceIcon = fallback.getConstantState().newDrawable().mutate();
+            sourceIcon.setBounds(0, 0, dp(14), dp(14));
+            from.setCompoundDrawablesRelative(sourceIcon, null, null, null);
+            from.setCompoundDrawablePadding(dp(5));
+        }
         from.setSingleLine(true);
         from.setPadding(dp(RING), dp(2), dp(RING), 0);
         holder.addView(from, new LinearLayout.LayoutParams(w + dp(2 * RING), ViewGroup.LayoutParams.WRAP_CONTENT));
+        TextView progress = text(playbackLabel(item), 12, palette.onSurfaceVariant, 500);
+        progress.setSingleLine(true);
+        progress.setPadding(dp(RING), dp(2), dp(RING), 0);
+        holder.addView(progress, new LinearLayout.LayoutParams(w + dp(2 * RING), ViewGroup.LayoutParams.WRAP_CONTENT));
         return holder;
     }
 
@@ -2539,19 +2773,19 @@ public class HomeActivity extends Activity {
         cardShape.setCornerRadius(dp(Focus.CARD));
         cardShape.setColor(palette.containerHigh);
         card.setBackground(cardShape);
-        TextView head = text("Quick panel", 14, palette.onSurfaceVariant, 600);
+        TextView head = text("Cài đặt nhanh", 14, palette.onSurfaceVariant, 600);
         head.setPadding(dp(8), dp(4), 0, dp(8));
         card.addView(head);
         GridLayout grid = new GridLayout(this);
         grid.setColumnCount(3);
         Object[][] entries = {
-                {R.drawable.ic_tune, "Preferences", (Runnable) this::showLauncherSettings},
+                {R.drawable.ic_tune, "Cài đặt giao diện", (Runnable) this::showLauncherSettings},
                 {R.drawable.ic_wifi, "Wi-Fi", (Runnable) () -> launch(new Intent(Settings.ACTION_WIFI_SETTINGS))},
-                {R.drawable.ic_display, "Display", (Runnable) () -> launch(new Intent(Settings.ACTION_DISPLAY_SETTINGS))},
-                {R.drawable.ic_sound, "Sound", (Runnable) () -> launch(new Intent(Settings.ACTION_SOUND_SETTINGS))},
-                {R.drawable.ic_moon, "Screen saver", (Runnable) () -> launch(new Intent("android.settings.DREAM_SETTINGS"))},
-                {R.drawable.ic_home, "Default home", (Runnable) () -> launch(new Intent(Settings.ACTION_HOME_SETTINGS))},
-                {R.drawable.ic_settings, "TV settings", (Runnable) () -> launch(new Intent(Settings.ACTION_SETTINGS))},
+                {R.drawable.ic_display, "Màn hình", (Runnable) () -> launch(new Intent(Settings.ACTION_DISPLAY_SETTINGS))},
+                {R.drawable.ic_sound, "Âm thanh", (Runnable) () -> launch(new Intent(Settings.ACTION_SOUND_SETTINGS))},
+                {R.drawable.ic_moon, "Bảo vệ màn hình", (Runnable) () -> launch(new Intent("android.settings.DREAM_SETTINGS"))},
+                {R.drawable.ic_home, "Màn hình chính mặc định", (Runnable) () -> launch(new Intent(Settings.ACTION_HOME_SETTINGS))},
+                {R.drawable.ic_settings, "Cài đặt thiết bị", (Runnable) () -> launch(new Intent(Settings.ACTION_SETTINGS))},
         };
         View first = null;
         for (Object[] e : entries) {
@@ -2606,7 +2840,7 @@ public class HomeActivity extends Activity {
             image.setImageTintList(ColorStateList.valueOf(focused ? palette.inverseOnSurface : palette.onSurface));
             name.setTextColor(focused ? palette.inverseOnSurface : palette.onSurface);
             v.animate().scaleX(focused ? 1.05f : 1f).scaleY(focused ? 1.05f : 1f)
-                    .setInterpolator(Motion.FAST_SPATIAL).setDuration(Motion.FAST_SPATIAL_MS).start();
+                    .setInterpolator(Motion.FAST_SPATIAL).setDuration(Motion.duration(Motion.FAST_SPATIAL_MS)).start();
         });
         tile.setOnClickListener(v -> {
             dialog.dismiss();
@@ -2641,12 +2875,12 @@ public class HomeActivity extends Activity {
     private void chooseFolder(String pkg) {
         List<String> names = new ArrayList<>(prefs.folders().keySet());
         List<String> items = new ArrayList<>(names);
-        items.add("New folder");
+        items.add("Tạo thư mục");
         new AlertDialog.Builder(this)
-                .setTitle("Add to folder")
+                .setTitle("Thêm vào thư mục")
                 .setItems(items.toArray(new String[0]), (d, which) -> {
                     if (which < names.size()) addToFolder(names.get(which), pkg);
-                    else askName("New folder", "", name -> addToFolder(name, pkg));
+                    else askName("Tạo thư mục", "", name -> addToFolder(name, pkg));
                 })
                 .show();
     }
@@ -2656,7 +2890,7 @@ public class HomeActivity extends Activity {
         input.setSingleLine(true);
         input.setText(initial);
         input.setSelection(initial.length());
-        input.setHint("Folder name");
+        input.setHint("Tên thư mục");
         new AlertDialog.Builder(this)
                 .setTitle(title)
                 .setView(input)
@@ -2664,7 +2898,7 @@ public class HomeActivity extends Activity {
                     String name = input.getText().toString().trim().replace("\"", "");
                     if (!name.isEmpty()) done.accept(name);
                 })
-                .setNegativeButton("Cancel", null)
+                .setNegativeButton("Hủy", null)
                 .show();
     }
 
@@ -2672,10 +2906,10 @@ public class HomeActivity extends Activity {
     private void showFolderMenu(String name) {
         new AlertDialog.Builder(this)
                 .setTitle(name)
-                .setItems(new String[]{"Rename folder", "Delete folder"}, (d, which) -> {
+                .setItems(new String[]{"Đổi tên thư mục", "Xóa thư mục"}, (d, which) -> {
                     Map<String, List<String>> folders = prefs.folders();
                     if (which == 0) {
-                        askName("Rename folder", name, newName -> {
+                        askName("Đổi tên thư mục", name, newName -> {
                             Map<String, List<String>> all = prefs.folders();
                             List<String> apps = all.remove(name);
                             if (apps == null) return;
@@ -2750,16 +2984,12 @@ public class HomeActivity extends Activity {
         card.setOnFocusChangeListener((v, focused) -> {
             float scale = focused ? 1.10f : 1f;
             ringFrame.animate().scaleX(scale).scaleY(scale)
-                    .setInterpolator(Motion.FAST_SPATIAL).setDuration(Motion.FAST_SPATIAL_MS).start();
+                    .setInterpolator(Motion.FAST_SPATIAL).setDuration(Motion.duration(Motion.FAST_SPATIAL_MS)).start();
             card.setOutlineSpotShadowColor(palette.primary);
             card.setOutlineAmbientShadowColor(palette.primary);
             card.animate().translationZ(focused ? dp(14) : 0)
-                    .setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.DEFAULT_EFFECTS_MS).start();
-            ObjectAnimator corners = ObjectAnimator.ofFloat(cardShape, "cornerRadius", cardShape.getCornerRadius(), focused ? radius * 0.62f : radius)
-                    .setDuration(Motion.FAST_SPATIAL_MS);
-            corners.setInterpolator(Motion.FAST_SPATIAL);
-            corners.start();
-            ring.setCornerRadius((focused ? radius * 0.62f : radius) + dp(RING));
+                    .setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.duration(Motion.DEFAULT_EFFECTS_MS)).start();
+            animateCorners(cardShape, ring, focused ? radius * 0.62f : radius);
             fadeRing(ring, focused);
             if (focused && art != null) onTileFocused("folder:" + name, name, art);
         });
@@ -2836,7 +3066,7 @@ public class HomeActivity extends Activity {
         if (nowCard != null) nowCard.setVisibility(View.GONE);
         managerPage.setVisibility(View.VISIBLE);
         nav.select(-1);
-        managerPage.setTitle("Launcher Manager · v" + versionName());
+        managerPage.setTitle("Cài đặt giao diện · v" + versionName());
         managerPage.show(managerSections());
         if (opening) managerPage.focusRail();
     }
@@ -2897,7 +3127,7 @@ public class HomeActivity extends Activity {
         LinearLayout words = new LinearLayout(this);
         words.setOrientation(LinearLayout.VERTICAL);
         words.setPadding(dp(14), 0, dp(10), 0);
-        TextView label = text("NOW PLAYING", 12, palette.onSurfaceVariant, 760);
+        TextView label = text("ĐANG PHÁT", 12, palette.onSurfaceVariant, 760);
         label.setLetterSpacing(0.2f);
         words.addView(label);
         nowTitle = text("", 16, palette.onSurface, 760);
@@ -2922,10 +3152,10 @@ public class HomeActivity extends Activity {
         nowButton.setBackground(nowButtonShape);
         nowButton.setFocusable(true);
         nowButton.setClickable(true);
-        nowButton.setContentDescription("Play or pause");
+        nowButton.setContentDescription("Phát hoặc tạm dừng");
         nowButton.setOnClickListener(v -> togglePlayback());
         nowButton.setOnFocusChangeListener((v, focused) -> {
-            v.animate().scaleX(focused ? 1.12f : 1f).scaleY(focused ? 1.12f : 1f).setInterpolator(Motion.FAST_SPATIAL).setDuration(Motion.FAST_SPATIAL_MS).start();
+            v.animate().scaleX(focused ? 1.12f : 1f).scaleY(focused ? 1.12f : 1f).setInterpolator(Motion.FAST_SPATIAL).setDuration(Motion.duration(Motion.FAST_SPATIAL_MS)).start();
             styleNowPlaying();
         });
         card.addView(nowButton, new LinearLayout.LayoutParams(dp(52), dp(52)));
@@ -3068,9 +3298,9 @@ public class HomeActivity extends Activity {
             dot.setScaleX(0f);
             dot.setScaleY(0f);
             dot.setVisibility(View.VISIBLE);
-            dot.animate().scaleX(1f).scaleY(1f).setInterpolator(Motion.FAST_SPATIAL).setDuration(Motion.FAST_SPATIAL_MS).start();
+            dot.animate().scaleX(1f).scaleY(1f).setInterpolator(Motion.FAST_SPATIAL).setDuration(Motion.duration(Motion.FAST_SPATIAL_MS)).start();
         } else {
-            dot.animate().scaleX(0f).scaleY(0f).setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.FAST_EFFECTS_MS)
+            dot.animate().scaleX(0f).scaleY(0f).setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.duration(Motion.FAST_EFFECTS_MS))
                     .withEndAction(() -> dot.setVisibility(View.GONE)).start();
         }
     }
@@ -3087,9 +3317,9 @@ public class HomeActivity extends Activity {
                 b.setScaleX(0.6f);
                 b.setScaleY(0.6f);
                 b.setVisibility(View.VISIBLE);
-                b.animate().alpha(1f).scaleX(1f).scaleY(1f).setInterpolator(Motion.FAST_SPATIAL).setDuration(Motion.FAST_SPATIAL_MS).start();
+                b.animate().alpha(1f).scaleX(1f).scaleY(1f).setInterpolator(Motion.FAST_SPATIAL).setDuration(Motion.duration(Motion.FAST_SPATIAL_MS)).start();
             } else if (!on && b.getVisibility() == View.VISIBLE) {
-                b.animate().alpha(0f).setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.FAST_EFFECTS_MS)
+                b.animate().alpha(0f).setInterpolator(Motion.FAST_EFFECTS).setDuration(Motion.duration(Motion.FAST_EFFECTS_MS))
                         .withEndAction(() -> b.setVisibility(View.GONE)).start();
             }
         }
@@ -3107,7 +3337,7 @@ public class HomeActivity extends Activity {
     private PlaybackState liveState;
     private CharSequence lastTitle, lastArtist;
     private Bitmap lastArt, shownArt;
-    private String lastPkg, lastItem, lastMediaId, lastMediaUri;
+    private String lastPkg, lastItem, lastMediaId, lastMediaUri, lastPoster;
     private PendingIntent lastSessionActivity;
     private int lastState;
     private float lastSpeed;
@@ -3143,7 +3373,7 @@ public class HomeActivity extends Activity {
         showingRemembered = false;
         if (!active || showingApps) {
             if (nowCard.getVisibility() == View.VISIBLE) {
-                nowCard.animate().alpha(0f).setDuration(200).withEndAction(() -> nowCard.setVisibility(View.GONE)).start();
+                nowCard.animate().alpha(0f).setDuration(Motion.duration(Motion.DEFAULT_EFFECTS_MS)).withEndAction(() -> nowCard.setVisibility(View.GONE)).start();
             }
             return;
         }
@@ -3161,7 +3391,7 @@ public class HomeActivity extends Activity {
             nowCard.setAlpha(0f);
             nowCard.setTranslationY(dp(10));
             nowCard.setVisibility(View.VISIBLE);
-            nowCard.animate().alpha(1f).translationY(0).setInterpolator(Motion.DEFAULT_SPATIAL).setDuration(Motion.DEFAULT_SPATIAL_MS).start();
+            nowCard.animate().alpha(1f).translationY(0).setInterpolator(Motion.DEFAULT_SPATIAL).setDuration(Motion.duration(Motion.DEFAULT_SPATIAL_MS)).start();
         }
     }
 
@@ -3184,16 +3414,27 @@ public class HomeActivity extends Activity {
             lastPkg = pkg;
             lastSessionActivity = playing != null ? playing.getSessionActivity() : null;
             lastArt = null;
+            lastPoster = null;
+            lastDuration = 0;
         }
         // The art copies made the card flicker: fetch it for a new item only, or until it arrives for the current one.
         if (lastArt == null) {
             Bitmap art = m.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART);
             if (art == null) art = m.getBitmap(MediaMetadata.METADATA_KEY_ART);
+            if (art == null) art = m.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON);
             lastArt = art;
+        }
+        String poster = m.getString(MediaMetadata.METADATA_KEY_ART_URI);
+        if (poster == null) poster = m.getString(MediaMetadata.METADATA_KEY_ALBUM_ART_URI);
+        if (poster == null) poster = m.getString(MediaMetadata.METADATA_KEY_DISPLAY_ICON_URI);
+        if (poster != null) {
+            String scheme = Uri.parse(poster).getScheme();
+            if ("https".equals(scheme) || "content".equals(scheme) || "android.resource".equals(scheme)) lastPoster = poster;
         }
         lastMediaId = m.getString(MediaMetadata.METADATA_KEY_MEDIA_ID);
         lastMediaUri = m.getString(MediaMetadata.METADATA_KEY_MEDIA_URI);
-        lastDuration = m.getLong(MediaMetadata.METADATA_KEY_DURATION);
+        long duration = m.getLong(MediaMetadata.METADATA_KEY_DURATION);
+        if (duration > 0) lastDuration = duration;
         lastState = st.getState();
         lastPosition = st.getPosition();
         lastUpdateTime = st.getLastPositionUpdateTime();
@@ -3230,6 +3471,8 @@ public class HomeActivity extends Activity {
     /** Six hours on: nothing to come back to, and no artwork or app intent kept around (the view lets go of it too). */
     private void forget() {
         lastPkg = lastItem = lastMediaId = lastMediaUri = null;
+        lastPoster = savedRecentArtItem = null;
+        savedRecentArt = null;
         lastTitle = lastArtist = null;
         lastArt = shownArt = null;
         if (nowArt != null) nowArt.setImageBitmap(null);
@@ -3382,9 +3625,14 @@ public class HomeActivity extends Activity {
     // ---- motion ----
 
     private void arrive(View v, int index) {
+        if (Motion.reduced()) {
+            v.setAlpha(1f);
+            v.setTranslationY(0f);
+            return;
+        }
         v.setAlpha(0f);
         v.setTranslationY(dp(18));
-        v.animate().alpha(1f).translationY(0).setStartDelay(40L * index).setInterpolator(Motion.DEFAULT_SPATIAL).setDuration(Motion.DEFAULT_SPATIAL_MS).start();
+        v.animate().alpha(1f).translationY(0).setStartDelay(40L * index).setInterpolator(Motion.DEFAULT_SPATIAL).setDuration(Motion.duration(Motion.DEFAULT_SPATIAL_MS)).start();
     }
 
     // ---- helpers ----

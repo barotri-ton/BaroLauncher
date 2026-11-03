@@ -68,7 +68,7 @@ final class ManagerPage extends LinearLayout {
         this.style = style;
         setOrientation(VERTICAL);
         setClipChildren(false);
-        title = style.text("Launcher Manager", 34, style.palette().onSurface, 760);
+        title = style.text("Cài đặt giao diện", 34, style.palette().onSurface, 760);
         title.setPadding(dp(4), dp(20), 0, dp(14));
         addView(title);
 
@@ -193,7 +193,7 @@ final class ManagerPage extends LinearLayout {
         row.setOnFocusChangeListener((v1, focused) -> {
             styleRow(row, bg, name, value, focused);
             row.animate().scaleX(focused ? 1.02f : 1f).scaleY(focused ? 1.02f : 1f)
-                    .setInterpolator(Motion.FAST_SPATIAL).setDuration(Motion.FAST_SPATIAL_MS).start();
+                    .setInterpolator(Motion.FAST_SPATIAL).setDuration(Motion.duration(Motion.FAST_SPATIAL_MS)).start();
         });
         row.setOnClickListener(v1 -> r.action.run());
         return row;
