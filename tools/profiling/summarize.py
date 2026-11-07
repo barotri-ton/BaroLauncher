@@ -20,7 +20,14 @@ def parse_mem(text):
                       ("Native Heap", "native_pss_kb"), ("Graphics", "graphics_pss_kb")):
         m = re.search(r"^\s*" + re.escape(name) + r"\s+([\d,]+)(?:\s|$)", text, re.M)
         result[key] = int(m.group(1).replace(",", "")) if m else None
-    # Android 9 can report Graphics only in App Summary (including a valid 0 KB),\n    # with no Graphics row in the detailed PSS table. Preserve 0 as a measurement.\n    if result["graphics_pss_kb"] is None:\n        summary = re.search(r"^\\s*App Summary\\s*$([\\s\\S]*?)(?:^\\s*Objects\\s*$|\\Z)", text, re.M)\n        if summary:\n            graphics = re.search(r"^\\s*Graphics:\\s+([\\d,]+)\\s*$", summary.group(1), re.M)\n            if graphics:\n                result["graphics_pss_kb"] = int(graphics.group(1).replace(",", ""))\n    for name, prefix in (("Dalvik Heap", "java"), ("Native Heap", "native")):
+    # API 28 may expose Graphics PSS in App Summary instead of the detail table.
+    if result["graphics_pss_kb"] is None:
+        summary = re.search(r"^\s*App Summary\s*$([\s\S]*?)(?:^\s*Objects\s*$|\Z)", text, re.M)
+        if summary:
+            graphics = re.search(r"^\s*Graphics:\s+([\d,]+)\s*$", summary.group(1), re.M)
+            if graphics:
+                result["graphics_pss_kb"] = int(graphics.group(1).replace(",", ""))
+    for name, prefix in (("Dalvik Heap", "java"), ("Native Heap", "native")):
         m = re.search(r"^\s*" + re.escape(name) + r"\s+(?:[\d,]+\s+){4}([\d,]+)\s+([\d,]+)\s+([\d,]+)", text, re.M)
         result[prefix + "_heap_size_kb"] = int(m.group(1).replace(",", "")) if m else None
         result[prefix + "_heap_alloc_kb"] = int(m.group(2).replace(",", "")) if m else None
