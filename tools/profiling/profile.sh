@@ -3,13 +3,16 @@
 set -euo pipefail
 PKG=com.rampey.materialtv
 COMP="$PKG/.HomeActivity"
-KIND=""; SERIAL=""; OUT=""; RUNS=5; SETTLE=120; IDLE_SHORT=60; IDLE_LONG=300
+KIND=""; SERIAL=""; OUT=""; APK=""; NETWORK=""; TOGGLES=""; RUNS=5; SETTLE=120; IDLE_SHORT=60; IDLE_LONG=300
 usage() { echo "Usage: bash $0 --kind emulator|hardware [--serial SERIAL] [--out DIR] [--runs 5] [--settle 120] [--quick]"; }
 while (( $# )); do
   case "$1" in
     --kind) KIND="${2:?}"; shift 2;;
     --serial) SERIAL="${2:?}"; shift 2;;
     --out) OUT="${2:?}"; shift 2;;
+    --apk) APK="${2:?}"; shift 2;;
+    --network) NETWORK="${2:?}"; shift 2;;
+    --toggles) TOGGLES="${2:?}"; shift 2;;
     --runs) RUNS="${2:?}"; shift 2;;
     --settle) SETTLE="${2:?}"; shift 2;;
     --quick) SETTLE=0; IDLE_SHORT=2; IDLE_LONG=5; shift;;
@@ -19,6 +22,9 @@ while (( $# )); do
 done
 [[ "$KIND" == emulator || "$KIND" == hardware ]] || { usage >&2; exit 2; }
 [[ "$RUNS" =~ ^[1-9][0-9]*$ && "$SETTLE" =~ ^[0-9]+$ ]] || exit 2
+[[ -n "$APK" && -f "$APK" && -n "$NETWORK" && -n "$TOGGLES" ]] || { echo "Required: --apk PATH --network on|off --toggles DESCRIPTION" >&2; exit 2; }
+[[ "$NETWORK" == on || "$NETWORK" == off ]] || exit 2
+command -v sha256sum >/dev/null || { echo "sha256sum required" >&2; exit 1; }
 command -v adb >/dev/null || { echo "adb required" >&2; exit 1; }
 if [[ -z "$SERIAL" ]]; then
   mapfile -t DEVICES < <(adb devices | awk 'NR>1 && $2=="device" {print $1}')
@@ -45,7 +51,8 @@ done
 "${ADB[@]}" shell pm list packages > "$OUT/environment/packages.txt"
 "${ADB[@]}" shell settings get secure enabled_accessibility_services > "$OUT/environment/accessibility-before.txt"
 "${ADB[@]}" shell cmd package resolve-activity -a android.intent.action.MAIN -c android.intent.category.HOME > "$OUT/environment/home-before.txt" || true
-printf 'network_state=RECORD_MANUALLY\napk_sha256=RECORD_FROM_INSTALLED_APK_OR_BUILD_ARTIFACT\n' >> "$OUT/manifest.txt"
+printf 'network_state=%s\nfeature_toggles=%s\napk_path=%s\napk_sha256=%s\napk_provenance=local_build_artifact_not_verified_installed\ninstalled_app_count=%s\n' "$NETWORK" "$TOGGLES" "$APK" "$(sha256sum "$APK" | awk '{print $1}')" "$("${ADB[@]}" shell pm list packages -3 | wc -l | tr -d ' ')" >> "$OUT/manifest.txt"
+grep -E 'versionCode=|versionName=' "$OUT/environment/package.txt" | head -n 4 >> "$OUT/manifest.txt" || true
 echo "Settling for $SETTLE seconds. Do not interact with device."
 sleep "$SETTLE"
 "${ADB[@]}" logcat -c
@@ -59,30 +66,29 @@ capture_memory() {
 }
 printf 'phase,sample,utc\n' > "$OUT/memory/index.csv"
 for ((i=1;i<=RUNS;i++)); do
+  # Independent cold launch for every 60s/300s sample pair.
   "${ADB[@]}" shell am force-stop "$PKG"
   sleep 2
   "${ADB[@]}" shell am start -W -n "$COMP" > "$OUT/startup/cold-$i.txt"
   printf 'cold,%s,%s,startup/cold-%s.txt\n' "$i" "$(date -u +%FT%TZ)" "$i" >> "$OUT/startup/index.csv"
   sleep "$IDLE_SHORT"
   capture_memory idle60 "$i"
-  if (( i == 1 )); then
-    sleep "$((IDLE_LONG > IDLE_SHORT ? IDLE_LONG-IDLE_SHORT : 0))"
-    capture_memory idle300 "$i"
-  fi
-  # Warm path uses Activity launch without force-stop; HOME key is intentionally NOT injected.
-  # Avoid changing the default HOME handler and accessibility services.
-  "${ADB[@]}" shell am start -W -n "$COMP" > "$OUT/startup/warm-$i.txt"
-  printf 'warm,%s,%s,startup/warm-%s.txt\n' "$i" "$(date -u +%FT%TZ)" "$i" >> "$OUT/startup/index.csv"
-done
-# Five idle samples at both intervals without forcing the app; preserve temporal comparability.
-for ((i=2;i<=RUNS;i++)); do
-  sleep "$IDLE_LONG"
+  sleep "$((IDLE_LONG > IDLE_SHORT ? IDLE_LONG-IDLE_SHORT : 0))"
   capture_memory idle300 "$i"
+  # Navigate to system Settings rather than sending HOME (which may resolve to BaroLauncher).
+  # If Settings cannot launch, mark this warm-return sample unavailable.
+  if "${ADB[@]}" shell am start -W -a android.settings.SETTINGS > "$OUT/startup/away-$i.txt" 2>&1; then
+    sleep 2
+    "${ADB[@]}" shell am start -W -n "$COMP" > "$OUT/startup/warm-return-$i.txt"
+    printf 'warm_return_from_settings,%s,%s,startup/warm-return-%s.txt\n' "$i" "$(date -u +%FT%TZ)" "$i" >> "$OUT/startup/index.csv"
+  else
+    printf 'warm_return_unavailable,%s,%s,startup/away-%s.txt\n' "$i" "$(date -u +%FT%TZ)" "$i" >> "$OUT/startup/index.csv"
+  fi
 done
 "${ADB[@]}" shell dumpsys activity processes > "$OUT/environment/activity-processes.txt"
 "${ADB[@]}" logcat -d -v threadtime > "$OUT/logs/logcat.txt"
 "${ADB[@]}" shell settings get secure enabled_accessibility_services > "$OUT/environment/accessibility-after.txt"
 "${ADB[@]}" shell cmd package resolve-activity -a android.intent.action.MAIN -c android.intent.category.HOME > "$OUT/environment/home-after.txt" || true
 echo "Raw evidence: $OUT"
-python3 "$(dirname "$0")/summarize.py" "$OUT" || echo "Summary failed; raw evidence retained."
-echo "Review manifest placeholders and redact logs before sharing. Do not call emulator data hardware evidence."
+python3 "$(dirname "$0")/summarize.py" "$OUT"
+echo "Review metadata provenance and redact logs before sharing. Do not call emulator data hardware evidence."
