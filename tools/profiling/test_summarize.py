@@ -42,10 +42,28 @@ class ParserFixtures(unittest.TestCase):
         self.assertEqual(len(frames), 1)
         self.assertEqual(next(iter(frames.values())), 16)
 
+    def test_missing_metric_value_is_none(self):
+        m = module.parse_mem(MEMINFO.replace("  Native Heap     5000     4900        0        0    20000    12000     8000", ""))
+        self.assertIsNone(m["native_heap_alloc_kb"])
+        self.assertIsNone(m["native_pss_kb"])
+
+    def test_missing_startup_is_not_fabricated(self):
+        self.assertIsNone(module.parse_start("Status: ok\\nWarning: not launched"))
+
+    def test_sha256_validation_rejects_short_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "manifest.txt").write_text(
+                "kind=emulator\\napi=28\\nruns=1\\nnetwork_state=on\\n"
+                "feature_toggles=default\\napk_sha256=abc\\napk_provenance=local\\ninstalled_app_count=1\\n"
+            )
+            with self.assertRaisesRegex(ValueError, "Invalid APK SHA-256"):
+                module.main(root)
+
     def test_missing_sample_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / "manifest.txt").write_text("kind=emulator\napi=28\nruns=1\nnetwork_state=off\nfeature_toggles=default\napk_sha256=abc\napk_provenance=local\ninstalled_app_count=1\n")
+            (root / "manifest.txt").write_text("kind=emulator\napi=28\nruns=1\nnetwork_state=off\nfeature_toggles=default\napk_sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\napk_provenance=local\ninstalled_app_count=1\n")
             with self.assertRaisesRegex(ValueError, "Missing memory sample"):
                 module.main(root)
 
