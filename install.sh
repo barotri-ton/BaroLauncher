@@ -5,9 +5,15 @@
 # Before: on the TV, turn on Developer options > USB debugging (and Network debugging if listed), then accept the
 # "Allow USB debugging?" prompt the first time this connects.
 set -euo pipefail
-IP="${1:?usage: ./install.sh <tv-ip> [apk]}"
+IP="${1:?usage: ./install.sh <tv-ip> [apk] [--enable-home-key]}"
+# Accessibility interception is optional and must be explicitly requested.
+ENABLE_HOME_KEY=false
+for arg in "${@:2}"; do
+  if [[ "$arg" == "--enable-home-key" ]]; then ENABLE_HOME_KEY=true; fi
+done
 HERE="$(cd "$(dirname "$0")" && pwd)"
-APK="${2:-}"
+APK=""
+if [[ "${2:-}" != "--enable-home-key" ]]; then APK="${2:-}"; fi
 if [[ -z "$APK" ]]; then
   for c in "$HERE/material-tv-launcher.apk" "$HERE/build/material-tv-launcher.apk"; do
     [[ -f "$c" ]] && { APK="$c"; break; }
@@ -42,24 +48,29 @@ S pm grant "$PKG" android.permission.ACCESS_COARSE_LOCATION || true
 # Continue tab: read what apps offer under Continue watching (only used if you turn the tab on).
 S pm grant "$PKG" android.permission.READ_TV_LISTINGS || true
 
-# Home button: Google TV ignores other home apps, so a small accessibility service sends the Home button here.
-# Added to (not replacing) any accessibility services already on.
-SVC="$PKG/$PKG.HomeKeyService"
-CUR="$(S settings get secure enabled_accessibility_services)"
-if [[ "$CUR" != *"$SVC"* ]]; then
-  if [[ -z "$CUR" || "$CUR" == "null" ]]; then NEW="$SVC"; else NEW="$CUR:$SVC"; fi
-  S settings put secure enabled_accessibility_services "$NEW"
+# Optional Home-key accessibility interception. Disabled by default to preserve
+# stock launcher behavior and prevent unexpected remote HOME redirection.
+if [[ "$ENABLE_HOME_KEY" == true ]]; then
+  SVC="$PKG/$PKG.HomeKeyService"
+  CUR="$(S settings get secure enabled_accessibility_services)"
+  if [[ "$CUR" != *"$SVC"* ]]; then
+    if [[ -z "$CUR" || "$CUR" == "null" ]]; then NEW="$SVC"; else NEW="$CUR:$SVC"; fi
+    S settings put secure enabled_accessibility_services "$NEW"
+  fi
+  S settings put secure accessibility_enabled 1
+  echo "Optional Home-key interception enabled. Undo with ./uninstall.sh $IP"
+else
+  echo "Home-key interception NOT enabled. Stock launcher behavior preserved."
 fi
-S settings put secure accessibility_enabled 1
 
 S am start -n "$PKG/.HomeActivity" >/dev/null
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   # Read the whole dump first: grep -q/-m1 closing a pipe early makes it fail under pipefail.
   ACT="$(S dumpsys activity activities)"
   if grep ResumedActivity <<<"$ACT" | grep "$PKG" >/dev/null; then
-    echo "Done: Material TV Launcher is on screen. Press Home on the remote anytime. Undo with ./uninstall.sh $IP"
+    echo "Done: Material TV Launcher is on screen. Use Android Home app settings to select launcher. Undo with ./uninstall.sh $IP"
     exit 0
   fi
   sleep 1
 done
-echo "Installed, but the launcher isn't on screen yet. Press Home on the remote. Undo with ./uninstall.sh $IP"
+echo "Installed, but the launcher isn't on screen yet. Use Android Home app settings to select launcher. Undo with ./uninstall.sh $IP"
