@@ -1,0 +1,32 @@
+name: Profiling harness checks
+on:
+  pull_request:
+    paths:
+      - 'tools/profiling/**'
+      - 'docs/BL-P0-02_PROFILING.md'
+      - '.github/workflows/profiling-*.yml'
+permissions:
+  contents: read
+jobs:
+  syntax-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Validate profiling scripts
+        run: |
+          bash -n tools/profiling/profile.sh
+          python3 -m py_compile tools/profiling/summarize.py
+      - name: Install Android SDK build dependencies
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" >/dev/null
+      - name: Build APK (Android 9 min SDK)
+        run: ./build.sh
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: bl-p0-02-build
+          path: build/material-tv-launcher.apk
+          if-no-files-found: error
