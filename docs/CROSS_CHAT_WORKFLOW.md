@@ -16,7 +16,7 @@ These states are **manual decisions** recorded in Issues/PR comments. Automation
 ## Automated checks
 - Push / PR: Android 9 APK build and artifact from `build-apk.yml`.
 - PR: handoff checklist validation from `handoff-check.yml`.
-- On PR open/update: workflow posts or refreshes a single machine-generated handoff comment (best effort if GitHub token comment permissions allow).
+- PR handoff validation currently checks section headings only; it does not verify substantive fields, QA verdict or approval. Automatic bot comments are **not implemented**.
 
 ## Session start prompt
 "Read `docs/PROJECT_STATUS.md`, `docs/CROSS_CHAT_WORKFLOW.md`, current open Issues and PRs in `barotri-ton/BaroLauncher`. Identify your role's ready work and avoid editing files owned by another active PR."
