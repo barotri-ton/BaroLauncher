@@ -16,13 +16,22 @@ fi
 BT="$ANDROID_HOME/build-tools/${BUILD_TOOLS:-34.0.0}"
 JAR="$ANDROID_HOME/platforms/android-34/android.jar"
 for f in "$BT/aapt2" "$BT/d8" "$JAR"; do [ -e "$f" ] || { echo "missing $f (set ANDROID_HOME / BUILD_TOOLS)"; exit 1; }; done
+# VERSION is the single source of truth; environment overrides remain supported.
+if [ -f VERSION ]; then
+  FILE_VERSION_NAME=$(sed -n 's/^VERSION_NAME=//p' VERSION | head -n 1)
+  FILE_VERSION_CODE=$(sed -n 's/^VERSION_CODE=//p' VERSION | head -n 1)
+fi
+VERSION_NAME="${VERSION_NAME:-${FILE_VERSION_NAME:-0.2.1}}"
+VERSION_CODE="${VERSION_CODE:-${FILE_VERSION_CODE:-184}}"
+case "$VERSION_CODE" in ''|*[!0-9]*) echo "Invalid VERSION_CODE: $VERSION_CODE"; exit 1;; esac
+echo "Building BaroLauncher $VERSION_NAME (Android versionCode $VERSION_CODE)"
 OUT=build
 rm -rf "$OUT"; mkdir -p "$OUT/res" "$OUT/gen" "$OUT/classes" "$OUT/dex"
 
 "$BT/aapt2" compile --dir res -o "$OUT/res/compiled.zip"
 "$BT/aapt2" link -I "$JAR" --manifest AndroidManifest.xml -o "$OUT/base.apk" \
   -A assets -0 ttf --java "$OUT/gen" --min-sdk-version "${MIN_SDK:-28}" --target-sdk-version 34 \
-  --version-code "${VERSION_CODE:-184}" --version-name "${VERSION_NAME:-0.2.1}" "$OUT/res/compiled.zip"
+  --version-code "$VERSION_CODE" --version-name "$VERSION_NAME" "$OUT/res/compiled.zip"
 
 # JDK core classes (for lambdas) plus android.jar for the Android API; d8 desugars to the TV's level.
 if ! javac -nowarn --release 17 -cp "$JAR" -d "$OUT/classes" $(find src third_party "$OUT/gen" -name '*.java') 2> "$OUT/javac.log"; then
