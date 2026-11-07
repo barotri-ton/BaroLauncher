@@ -20,14 +20,14 @@ emulator -avd baro-api28 -memory 1024 -no-snapshot -no-window -no-audio -gpu swi
 adb wait-for-device
 adb shell getprop ro.build.version.sdk  # must print 28
 ./build.sh
-adb install build/material-tv-launcher.apk
+adb install build/BaroLauncher.apk
 ```
 
 This example requires host virtualization support and an emulator image compatible with the host. The GitHub workflow `profiling-emulator.yml` provides a manually triggered API 28 smoke run; it is not a substitute for local hardware testing.
 
 ## Run
 ```bash
-bash tools/profiling/profile.sh --kind emulator --serial emulator-5554 --runs 5 --settle 120 --apk build/material-tv-launcher.apk --network on --toggles default --out evidence/profiling/emulator-baseline-01
+bash tools/profiling/profile.sh --kind emulator --serial emulator-5554 --runs 5 --settle 120 --apk build/BaroLauncher.apk --network on --toggles default --out evidence/profiling/emulator-baseline-01
 python3 tools/profiling/summarize.py evidence/profiling/emulator-baseline-01
 # For physical projector, use --kind hardware --serial <actual-adb-serial>
 ```
