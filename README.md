@@ -7,7 +7,7 @@
 Những app bạn dùng nhiều nhất, xếp theo thứ tự bạn dùng, với màu sắc thay đổi theo app đang được chọn.
 Không quảng cáo, không gợi ý nội dung, không theo dõi, chỉ tốn khoảng 40 MB bộ nhớ. Launcher chỉ kết nối mạng để lấy thời tiết, ảnh màn hình chờ và poster hoặc logo kênh mà app cung cấp; mỗi mục đều chỉnh được trong Launcher settings.
 
-[![Tải APK](https://img.shields.io/badge/T%E1%BA%A3i-APK-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/barotri-ton/material-tv-launcher/releases/latest/download/material-tv-launcher.apk)
+[![Tải APK](https://img.shields.io/badge/T%E1%BA%A3i-APK-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/barotri-ton/BaroLauncher/releases/latest/download/BaroLauncher.apk)
 
 </div>
 
@@ -55,19 +55,19 @@ qua ADB (công cụ gỡ lỗi của Android). Không có gì trên TV bị xóa
 
 ### Bước 2: Tải file
 
-Tải ba file của bản mới nhất từ trang [Releases](https://github.com/barotri-ton/material-tv-launcher/releases/latest)
+Tải ba file của bản mới nhất từ trang [Releases](https://github.com/barotri-ton/BaroLauncher/releases/latest)
 vào cùng một thư mục trên máy tính:
 
-- [`material-tv-launcher.apk`](https://github.com/barotri-ton/material-tv-launcher/releases/latest/download/material-tv-launcher.apk): app launcher
-- [`install.sh`](https://github.com/barotri-ton/material-tv-launcher/releases/latest/download/install.sh): script cài đặt và cấp quyền
-- [`uninstall.sh`](https://github.com/barotri-ton/material-tv-launcher/releases/latest/download/uninstall.sh): script gỡ, trả lại màn hình chính cũ
+- [`BaroLauncher.apk`](https://github.com/barotri-ton/BaroLauncher/releases/latest/download/BaroLauncher.apk): app launcher
+- [`install.sh`](https://github.com/barotri-ton/BaroLauncher/releases/latest/download/install.sh): script cài đặt và cấp quyền
+- [`uninstall.sh`](https://github.com/barotri-ton/BaroLauncher/releases/latest/download/uninstall.sh): script gỡ, trả lại màn hình chính cũ
 
 Hoặc tải bằng lệnh:
 
 ```bash
-curl -fLO https://github.com/barotri-ton/material-tv-launcher/releases/latest/download/material-tv-launcher.apk
-curl -fLO https://github.com/barotri-ton/material-tv-launcher/releases/latest/download/install.sh
-curl -fLO https://github.com/barotri-ton/material-tv-launcher/releases/latest/download/uninstall.sh
+curl -fLO https://github.com/barotri-ton/BaroLauncher/releases/latest/download/BaroLauncher.apk
+curl -fLO https://github.com/barotri-ton/BaroLauncher/releases/latest/download/install.sh
+curl -fLO https://github.com/barotri-ton/BaroLauncher/releases/latest/download/uninstall.sh
 ```
 
 ### Bước 3: Cài lên TV
@@ -85,7 +85,7 @@ Lần đầu kết nối, TV sẽ hỏi **Cho phép gỡ lỗi USB?**: chọn **
 
 ```powershell
 adb connect 192.168.1.50:5555
-adb install -r material-tv-launcher.apk
+adb install -r BaroLauncher.apk
 adb shell cmd notification allow_listener com.rampey.materialtv/com.rampey.materialtv.MediaListener
 adb shell pm grant com.rampey.materialtv android.permission.DUMP
 adb shell cmd appops set com.rampey.materialtv GET_USAGE_STATS allow
