@@ -34,7 +34,6 @@ jobs:
           retention-days: 30
       - name: Publish release (not on pull requests)
         if: github.event_name != 'pull_request'
-        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -42,6 +41,12 @@ jobs:
           VERSION=$(grep -o 'VERSION_NAME:-[0-9.]*' build.sh | cut -d- -f2)
           # The same APK twice: a fixed name (install.sh and the download link rely on it) and one carrying the version.
           cp build/material-tv-launcher.apk "build/material-tv-launcher-v$VERSION.apk"
-          gh release create "$TAG" build/material-tv-launcher.apk "build/material-tv-launcher-v$VERSION.apk" install.sh uninstall.sh -R "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" --title "Android 9 build v$VERSION" \
-            --notes "Material TV Launcher $VERSION for Android 9+ (API 28). Built from $GITHUB_SHA."
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" build/material-tv-launcher.apk "build/material-tv-launcher-v$VERSION.apk" install.sh uninstall.sh --clobber -R "$GITHUB_REPOSITORY"
+            gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --title "Android 9 build v$VERSION" \
+              --notes "BaroLauncher $VERSION for Android 9+ (API 28). Built from $GITHUB_SHA."
+          else
+            gh release create "$TAG" build/material-tv-launcher.apk "build/material-tv-launcher-v$VERSION.apk" install.sh uninstall.sh -R "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --title "Android 9 build v$VERSION" \
+              --notes "BaroLauncher $VERSION for Android 9+ (API 28). Built from $GITHUB_SHA."
+          fi
