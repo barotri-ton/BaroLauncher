@@ -31,8 +31,9 @@ jobs:
           arch: x86_64
           target: google_apis
           profile: pixel_2
-          ram-size: 1024M
-          heap-size: 128M
+          ram-size: 2048M
+          heap-size: 256M
+          cores: 2
           disable-animations: true
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -camera-back none
           script: |
