@@ -528,6 +528,9 @@ public class HomeActivity extends Activity {
         });
         managerPage.setVisibility(View.GONE);
         pages.addView(managerPage, match());
+        // Populate Continue only after buildHomePage initializes homeContinue/homeContinueRow.
+        fillHomeContinue();
+        applyContinueTab();
         return root;
     }
 
@@ -563,8 +566,6 @@ public class HomeActivity extends Activity {
                     else showQuickPanel();
                 });
         nav.select(0);
-        fillHomeContinue();
-        applyContinueTab();
         nav.button(3).setOnLongClickListener(v -> {
             showLauncherSettings();
             return true;
