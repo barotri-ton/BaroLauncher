@@ -27,21 +27,24 @@ This example requires host virtualization support and an emulator image compatib
 
 ## Run
 ```bash
-bash tools/profiling/profile.sh --kind emulator --serial emulator-5554 --runs 5 --settle 120 --out evidence/profiling/emulator-baseline-01
+bash tools/profiling/profile.sh --kind emulator --serial emulator-5554 --runs 5 --settle 120 --apk build/material-tv-launcher.apk --network on --toggles default --out evidence/profiling/emulator-baseline-01
 python3 tools/profiling/summarize.py evidence/profiling/emulator-baseline-01
 # For physical projector, use --kind hardware --serial <actual-adb-serial>
 ```
 
-The default full protocol takes approximately 30 minutes plus ADB overhead. `--quick` is **CI smoke only** and does not satisfy baseline acceptance. Raw evidence is written into environment/, startup/, memory/, frames/ and logs/. Summary CSV and median/min/max are generated; missing metrics are left blank rather than invented.
+The default full protocol takes at least 25 minutes plus settling, warm returns and ADB overhead. `--quick` is **CI smoke only** and does not satisfy baseline acceptance. Raw evidence is written into environment/, startup/, memory/, frames/ and logs/. Summary CSV and median/min/max are generated; missing metrics are left blank rather than invented.
 
-**Important measurement caveats:**
-- Cold runs force-stop only `com.rampey.materialtv`. Warm runs call `am start -W` again without force-stop, so these are **same-process relaunch** samples, not verified HOME-switch returns. QA must independently perform and document HOME-switch warm returns.
-- `am start -W` reports ActivityManager launch timing, **not first visible frame or fully drawn**. Use screen recording/trace on target hardware for visual readiness.
-- `idle60` is sampled 60 s after each cold launch. `idle300` is sampled after the first run and at later intervals without a fresh cold start; these are **not five independent 5-minute post-launch samples**. For strict 5-minute post-launch measurements, rerun individual cold sessions with a controlled 300-second wait.
-- Java/native/graphics fields depend on the device's `dumpsys meminfo` format. Review raw outputs before using summaries.
-- Frame duration is derived from `gfxinfo framestats` timestamps if supported; repeated snapshots can include overlapping frames, so aggregate frame counts are **not independent samples**.
-- GC count is a log-pattern heuristic; inspect raw logcat for GC, OOM, ANR and skipped frames.
-- Focus sweep, app return, media, screensaver and 30-minute background workloads remain **manual QA scenarios**. Record them as distinct runs with the same environment metadata; do not mislabel the idle harness as full scenario coverage.
+**Important measurement semantics and limitations:**
+- Each run force-stops **only BaroLauncher**, cold-starts, waits 60 seconds, captures `idle60`, waits to 300 seconds from cold launch, then captures `idle300`. Each of the five 300-second samples belongs to an independent cold-start cycle. Exact wall-clock sampling has ADB overhead; see timestamps.
+- The warm-return path starts Android Settings, then returns explicitly to BaroLauncher without force-stop. This is a **Settings-switch return**, not a HOME-button return; QA must separately validate HOME selection/return and video-visible readiness.
+- `am start -W` is ActivityManager timing only, not first frame or fully drawn.
+- PSS columns (`total_pss_kb`, `dalvik_pss_kb`, `native_pss_kb`, `graphics_pss_kb`) are **not** allocated heap. `java_heap_alloc_kb` and `native_heap_alloc_kb` are taken from Heap Alloc columns when available; missing values remain blank and cause a completeness failure.
+- Frame records are deduplicated by intended-vsync/completion timestamp pair across overlapping gfxinfo snapshots. This prevents duplicate frame rows but does not guarantee comparable window durations.
+- GC/ANR/OOM/LMK require phase-correlated inspection of raw logcat; no exact GC event count is claimed.
+- `--apk` records SHA-256 of the **local build artifact** and labels its provenance; it does not prove the installed APK is byte-identical. Record installed APK hash separately when possible.
+- `--network on|off` and `--toggles DESCRIPTION` are mandatory operator declarations; verify they match actual device state.
+- CI `--quick --runs 2` is smoke only, not a valid five-run baseline.
+- Focus sweeps, media, screensaver and 30-minute background remain separate manual QA scenarios.
 
 ## Reporting
 Attach the raw evidence artifact (redacted) and record exact run, APK/versionCode, Git commit, network, installed apps, emulator vs hardware, median/range and any missing metrics. Never check sensitive logcat into the public repository. CI artifacts are retained for 14 days; archive reviewed evidence appropriately.
