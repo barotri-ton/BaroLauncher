@@ -1,0 +1,36 @@
+name: "QA → Development defect"
+description: "Report reproducible Android TV defects"
+title: "[QA][BUG] "
+labels: []
+body:
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment and build
+      description: "Device, Android API, RAM, APK versionCode, commit"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs and evidence
+      description: "Redact sensitive data"
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options: [Blocker, Critical, Major, Minor]
+    validations:
+      required: true
