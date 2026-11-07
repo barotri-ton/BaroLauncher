@@ -1,0 +1,26 @@
+name: One-time source refs migration
+on:
+  push:
+    paths:
+      - .github/workflows/sync-source-refs.yml
+permissions:
+  contents: write
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Copy original branches and tags
+        run: |
+          set -euo pipefail
+          git remote add source https://github.com/barotri-ton/material-tv-launcher.git
+          git fetch source '+refs/heads/*:refs/remotes/source/*' --tags
+          for ref in $(git for-each-ref --format='%(refname:short)' refs/remotes/source/); do
+            if [ "$ref" != "source/main" ]; then
+              name="${ref#source/}"
+              git push origin "refs/remotes/$ref:refs/heads/$name"
+            fi
+          done
+          git push origin --tags
