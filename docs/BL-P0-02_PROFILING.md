@@ -55,3 +55,13 @@ Attach the raw evidence artifact (redacted) and record exact run, APK/versionCod
 - [ ] Five full-run samples reviewed for comparability
 - [ ] QA reproduces memory/startup and separate HOME-switch/focus workloads
 - [ ] A7 Ultra hardware baseline (BLOCKED: device date unknown)
+
+## QA re-validation protocol — full cloud baseline
+
+The profiling workflow now requests **five independent cold-start cycles** with 60s and 300s samples, and a 120s initial settling period. It may take 30+ minutes. The workflow is a Google APIs phone-shaped API28 screening emulator, **not an Android TV firmware emulator** and not A7 Ultra hardware. The separate Android TV cloud UI workflow is tracked in PR #9. Do not combine those datasets.
+
+Each cycle saves HOME keypress foreground evidence, HOME return activity timing, BaroLauncher PID before/after HOME, Settings foreground evidence and PID before Settings return. HOME may resolve back to BaroLauncher; this is an observational test, not proof of a true external HOME switch. QA must verify the actual foreground activity and process continuity from raw files.
+
+Metadata includes local APK SHA-256 and an attempted installed base APK SHA-256 via ADB read; if unavailable, provenance is explicitly UNAVAILABLE. Network connectivity dump and airplane mode are recorded, but feature toggles remain operator-declared, not independently verified. APK hash mismatch is a hard error when installed hash is available. Exact frame readiness still needs synchronized visual evidence. Missing meminfo fields are errors, not imputed values.
+
+Regression scope: HOME and accessibility defaults are compared before/after; D-pad/Back, app discovery/launch, offline, recovery and signing/upgrade require separate QA evidence. No source changes are made to stock launcher or HOME settings. Logcat may include personal data; redact before publishing.
