@@ -25,8 +25,16 @@ jobs:
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" >/dev/null
       - name: Build (min SDK 28 = Android 9)
         run: ./build.sh
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: barolauncher-android9-apk
+          path: build/material-tv-launcher.apk
+          if-no-files-found: error
+          retention-days: 30
       - name: Publish release (not on pull requests)
         if: github.event_name != 'pull_request'
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -34,7 +42,6 @@ jobs:
           VERSION=$(grep -o 'VERSION_NAME:-[0-9.]*' build.sh | cut -d- -f2)
           # The same APK twice: a fixed name (install.sh and the download link rely on it) and one carrying the version.
           cp build/material-tv-launcher.apk "build/material-tv-launcher-v$VERSION.apk"
-          gh release delete "$TAG" --cleanup-tag --yes -R "$GITHUB_REPOSITORY" || true
           gh release create "$TAG" build/material-tv-launcher.apk "build/material-tv-launcher-v$VERSION.apk" install.sh uninstall.sh -R "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" --title "Android 9 build v$VERSION" \
             --notes "Material TV Launcher $VERSION for Android 9+ (API 28). Built from $GITHUB_SHA."
