@@ -1,0 +1,31 @@
+name: "Architecture → Development"
+description: "Approved P0/P1 requirement handoff"
+title: "[ARCH] "
+labels: []
+body:
+  - type: textarea
+    id: requirement
+    attributes:
+      label: Requirement and context
+      description: "Reference FRD/ADR and why this matters"
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Testable acceptance criteria
+      description: "Include Android 9, 1 GB RAM and remote behavior where applicable"
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options: [P0, P1, P2]
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risks and recovery
+      description: "Include stock launcher fallback and migration risks"
