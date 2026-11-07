@@ -1,4 +1,4 @@
-name: Android 9 profiling emulator smoke
+name: Android 9 profiling emulator baseline
 on:
   workflow_dispatch:
   pull_request:
@@ -10,7 +10,7 @@ permissions:
 jobs:
   emulator-baseline:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -34,7 +34,16 @@ jobs:
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -camera-back none
           script: |
             adb install build/material-tv-launcher.apk
-            bash tools/profiling/profile.sh --kind emulator --serial emulator-5554 --runs 2 --settle 10 --quick --apk build/material-tv-launcher.apk --network on --toggles default --out evidence/profiling/ci-emulator
+            bash tools/profiling/profile.sh --kind emulator --serial emulator-5554 --runs 5 --settle 120 --apk build/material-tv-launcher.apk --network on --toggles default --out evidence/profiling/ci-emulator-5-cycle
+      - name: Regression safety evidence
+        if: always()
+        run: |
+          if [ -f evidence/profiling/ci-emulator-5-cycle/environment/home-before.txt ] && [ -f evidence/profiling/ci-emulator-5-cycle/environment/home-after.txt ]; then
+            diff -u evidence/profiling/ci-emulator-5-cycle/environment/home-before.txt evidence/profiling/ci-emulator-5-cycle/environment/home-after.txt
+          fi
+          if [ -f evidence/profiling/ci-emulator-5-cycle/environment/accessibility-before.txt ] && [ -f evidence/profiling/ci-emulator-5-cycle/environment/accessibility-after.txt ]; then
+            diff -u evidence/profiling/ci-emulator-5-cycle/environment/accessibility-before.txt evidence/profiling/ci-emulator-5-cycle/environment/accessibility-after.txt
+          fi
       - name: Upload raw evidence even on failure
         if: always()
         uses: actions/upload-artifact@v4
