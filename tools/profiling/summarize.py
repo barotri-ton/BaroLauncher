@@ -81,7 +81,9 @@ def main(root):
                 f.write(f"{phase} {key}: {describe([r[key] for r in subset])}\n")
         for phase in ("cold", "warm"):
             f.write(f"{phase} TotalTime: {describe([r['total_ms'] for r in starts if r['sample'].startswith(phase)])}\n")
-        f.write("GC: review logs/logcat.txt; frame times: raw frames/*.txt. No automated frame percentiles yet.\n")
+        f.write(f"gfxinfo frame duration ms (all captures): {describe(frames)}\n")
+        f.write(f"Potential GC log lines (heuristic, not exact count): {gc_events}\n")
+        f.write("Review raw logcat for ANR/OOM; frame data may be unavailable.\n")
     print((root / "summary.txt").read_text())
 
 if __name__ == "__main__":
