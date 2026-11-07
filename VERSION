@@ -1,0 +1,6 @@
+# BaroLauncher version metadata
+# Format: MAJOR.RELEASE.SERVICE_PACK.PATCH[-CHANNEL.N]
+# CHANNEL: dev, alpha, beta, rc; omit suffix for GA.
+VERSION_NAME=1.0.0.0-beta.1
+# Must increase monotonically for Android upgrades. Previous source build used 184.
+VERSION_CODE=185
