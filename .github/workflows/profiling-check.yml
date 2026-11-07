@@ -29,5 +29,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bl-p0-02-build
-          path: build/material-tv-launcher.apk
+          path: build/BaroLauncher.apk
           if-no-files-found: error
