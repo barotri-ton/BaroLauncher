@@ -81,7 +81,7 @@ capture_memory() {
 printf 'phase,sample,utc\n' > "$OUT/memory/index.csv"
 for ((i=1;i<=RUNS;i++)); do
   # Independent cold launch for every 60s/300s sample pair.
-  printf "cycle_%s_cold_begin_utc=%s\\n" "$i" "$(date -u +%FT%TZ)" >> "$OUT/manifest.txt"
+  printf "cycle_%s_cold_begin_utc=%s\n" "$i" "$(date -u +%FT%TZ)" >> "$OUT/manifest.txt"
   "${ADB[@]}" shell am force-stop "$PKG"
   sleep 2
   "${ADB[@]}" shell am start -W -n "$COMP" > "$OUT/startup/cold-$i.txt"
@@ -90,7 +90,7 @@ for ((i=1;i<=RUNS;i++)); do
   capture_memory idle60 "$i"
   sleep "$((IDLE_LONG > IDLE_SHORT ? IDLE_LONG-IDLE_SHORT : 0))"
   capture_memory idle300 "$i"
-  printf "cycle_%s_idle300_end_utc=%s\\n" "$i" "$(date -u +%FT%TZ)" >> "$OUT/manifest.txt"
+  printf "cycle_%s_idle300_end_utc=%s\n" "$i" "$(date -u +%FT%TZ)" >> "$OUT/manifest.txt"
   "${ADB[@]}" shell pidof "$PKG" > "$OUT/startup/pid-before-$i.txt" || true
   # HOME-switch evidence is observational; HOME may route to this same launcher.
   "${ADB[@]}" shell input keyevent KEYCODE_HOME
