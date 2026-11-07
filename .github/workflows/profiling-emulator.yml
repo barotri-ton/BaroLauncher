@@ -36,8 +36,8 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -camera-back none
           script: |
-            adb install build/material-tv-launcher.apk
-            bash tools/profiling/profile.sh --kind emulator --serial emulator-5554 --runs 5 --settle 120 --apk build/material-tv-launcher.apk --network on --toggles default --out evidence/profiling/ci-emulator-5-cycle
+            adb install build/BaroLauncher.apk
+            bash tools/profiling/profile.sh --kind emulator --serial emulator-5554 --runs 5 --settle 120 --apk build/BaroLauncher.apk --network on --toggles default --out evidence/profiling/ci-emulator-5-cycle
       - name: Validate full baseline evidence
         run: python3 tools/profiling/validate_evidence.py evidence/profiling/ci-emulator-5-cycle
       - name: Regression safety evidence
