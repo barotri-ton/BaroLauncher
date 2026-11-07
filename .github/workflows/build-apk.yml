@@ -3,11 +3,11 @@ name: Build APK
 on:
   pull_request:
     branches: [main]
-    paths: ['src/**', 'res/**', 'assets/**', 'third_party/**', 'AndroidManifest.xml', 'build.sh', '.github/workflows/build-apk.yml']
+    paths: ['src/**', 'res/**', 'assets/**', 'third_party/**', 'AndroidManifest.xml', 'build.sh', 'VERSION', '.github/workflows/build-apk.yml']
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['src/**', 'res/**', 'assets/**', 'third_party/**', 'AndroidManifest.xml', 'build.sh', '.github/workflows/build-apk.yml']
+    paths: ['src/**', 'res/**', 'assets/**', 'third_party/**', 'AndroidManifest.xml', 'build.sh', 'VERSION', '.github/workflows/build-apk.yml']
 
 permissions:
   contents: write
@@ -37,16 +37,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          VERSION=$(sed -n 's/^VERSION_NAME=//p' VERSION)
           TAG=android9-latest
-          VERSION=$(grep -o 'VERSION_NAME:-[0-9.]*' build.sh | cut -d- -f2)
           # The same APK twice: a fixed name (install.sh and the download link rely on it) and one carrying the version.
-          cp build/material-tv-launcher.apk "build/material-tv-launcher-v$VERSION.apk"
+          cp build/material-tv-launcher.apk "build/barolauncher-v$VERSION.apk"
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" build/material-tv-launcher.apk "build/material-tv-launcher-v$VERSION.apk" install.sh uninstall.sh --clobber -R "$GITHUB_REPOSITORY"
+            gh release upload "$TAG" build/material-tv-launcher.apk "build/barolauncher-v$VERSION.apk" install.sh uninstall.sh --clobber -R "$GITHUB_REPOSITORY"
             gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --title "Android 9 build v$VERSION" \
               --notes "BaroLauncher $VERSION for Android 9+ (API 28). Built from $GITHUB_SHA."
           else
-            gh release create "$TAG" build/material-tv-launcher.apk "build/material-tv-launcher-v$VERSION.apk" install.sh uninstall.sh -R "$GITHUB_REPOSITORY" \
+            gh release create "$TAG" build/material-tv-launcher.apk "build/barolauncher-v$VERSION.apk" install.sh uninstall.sh -R "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" --title "Android 9 build v$VERSION" \
               --notes "BaroLauncher $VERSION for Android 9+ (API 28). Built from $GITHUB_SHA."
           fi
