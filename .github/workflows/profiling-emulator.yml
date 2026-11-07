@@ -1,6 +1,10 @@
 name: Android 9 profiling emulator smoke
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'tools/profiling/**'
+      - '.github/workflows/profiling-emulator.yml'
 permissions:
   contents: read
 jobs:
