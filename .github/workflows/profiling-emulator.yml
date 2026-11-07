@@ -30,7 +30,7 @@ jobs:
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -camera-back none
           script: |
             adb install build/material-tv-launcher.apk
-            bash tools/profiling/profile.sh --kind emulator --serial emulator-5554 --runs 2 --settle 10 --quick --out evidence/profiling/ci-emulator
+            bash tools/profiling/profile.sh --kind emulator --serial emulator-5554 --runs 2 --settle 10 --quick --apk build/material-tv-launcher.apk --network on --toggles default --out evidence/profiling/ci-emulator
       - name: Upload raw evidence even on failure
         if: always()
         uses: actions/upload-artifact@v4
