@@ -20,6 +20,7 @@ jobs:
         run: |
           bash -n tools/profiling/profile.sh
           python3 -m py_compile tools/profiling/summarize.py
+          python3 -m unittest discover -s tools/profiling -p 'test_*.py' -v
       - name: Install Android SDK build dependencies
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" >/dev/null
       - name: Build APK (Android 9 min SDK)
