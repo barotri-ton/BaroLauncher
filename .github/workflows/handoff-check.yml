@@ -1,0 +1,26 @@
+name: Cross-chat handoff validation
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  handoff:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR handoff fields
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          test -n "$PR_BODY" || { echo "::error::PR description required. Use the PR template."; exit 1; }
+          for section in "Architecture handoff" "Development changes" "Validation" "QA handoff"; do
+            if ! grep -Fq "$section" <<<"$PR_BODY"; then
+              echo "::error::Missing PR handoff section: $section"
+              exit 1
+            fi
+          done
+          echo "PR contains the cross-chat handoff sections."
+          echo "This is a structure check, NOT QA approval."
