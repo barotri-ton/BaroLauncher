@@ -48,14 +48,14 @@ class ParserFixtures(unittest.TestCase):
         self.assertIsNone(m["native_pss_kb"])
 
     def test_missing_startup_is_not_fabricated(self):
-        self.assertIsNone(module.parse_start("Status: ok\\nWarning: not launched"))
+        self.assertIsNone(module.parse_start("Status: ok\nWarning: not launched"))
 
     def test_sha256_validation_rejects_short_hash(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "manifest.txt").write_text(
-                "kind=emulator\\napi=28\\nruns=1\\nnetwork_state=on\\n"
-                "feature_toggles=default\\napk_sha256=abc\\napk_provenance=local\\ninstalled_app_count=1\\n"
+                "kind=emulator\napi=28\nruns=1\nnetwork_state=on\n"
+                "feature_toggles=default\napk_sha256=abc\napk_provenance=local\ninstalled_app_count=1\n"
             )
             with self.assertRaisesRegex(ValueError, "Invalid APK SHA-256"):
                 module.main(root)
