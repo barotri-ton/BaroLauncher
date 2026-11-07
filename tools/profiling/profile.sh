@@ -4,7 +4,7 @@ set -euo pipefail
 PKG=com.rampey.materialtv
 COMP="$PKG/.HomeActivity"
 KIND=""; SERIAL=""; OUT=""; APK=""; NETWORK=""; TOGGLES=""; RUNS=5; SETTLE=120; IDLE_SHORT=60; IDLE_LONG=300
-usage() { echo "Usage: bash $0 --kind emulator|hardware [--serial SERIAL] [--out DIR] [--runs 5] [--settle 120] [--quick]"; }
+usage() { echo "Usage: bash $0 --kind emulator|hardware --apk FILE --network on|off --toggles TEXT [--serial SERIAL] [--runs 5] [--settle 120] [--quick]"; }
 while (( $# )); do
   case "$1" in
     --kind) KIND="${2:?}"; shift 2;;
@@ -53,6 +53,20 @@ done
 "${ADB[@]}" shell cmd package resolve-activity -a android.intent.action.MAIN -c android.intent.category.HOME > "$OUT/environment/home-before.txt" || true
 printf 'network_state=%s\nfeature_toggles=%s\napk_path=%s\napk_sha256=%s\napk_provenance=local_build_artifact_not_verified_installed\ninstalled_app_count=%s\n' "$NETWORK" "$TOGGLES" "$APK" "$(sha256sum "$APK" | awk '{print $1}')" "$("${ADB[@]}" shell pm list packages -3 | wc -l | tr -d ' ')" >> "$OUT/manifest.txt"
 grep -E 'versionCode=|versionName=' "$OUT/environment/package.txt" | head -n 4 >> "$OUT/manifest.txt" || true
+# Verify actual connectivity and installed APK identity without changing system settings.
+"${ADB[@]}" shell dumpsys connectivity > "$OUT/environment/connectivity.txt"
+"${ADB[@]}" shell settings get global airplane_mode_on > "$OUT/environment/airplane-mode.txt"
+INSTALLED_PATH=$("${ADB[@]}" shell pm path "$PKG" | sed -n 's/^package://p' | head -n 1 | tr -d '\r')
+if [[ -n "$INSTALLED_PATH" ]]; then
+  if "${ADB[@]}" exec-out cat "$INSTALLED_PATH" > "$OUT/environment/installed-base.apk"; then
+    printf 'installed_apk_sha256=%s\n' "$(sha256sum "$OUT/environment/installed-base.apk" | awk '{print $1}')" >> "$OUT/manifest.txt"
+    rm -f "$OUT/environment/installed-base.apk"
+  else
+    rm -f "$OUT/environment/installed-base.apk"
+    printf 'installed_apk_sha256=UNAVAILABLE\n' >> "$OUT/manifest.txt"
+  fi
+fi
+printf 'network_verification=see_environment_connectivity_and_airplane_mode\ntoggle_verification=operator_declared_only\n' >> "$OUT/manifest.txt"
 echo "Settling for $SETTLE seconds. Do not interact with device."
 sleep "$SETTLE"
 "${ADB[@]}" logcat -c
@@ -67,6 +81,7 @@ capture_memory() {
 printf 'phase,sample,utc\n' > "$OUT/memory/index.csv"
 for ((i=1;i<=RUNS;i++)); do
   # Independent cold launch for every 60s/300s sample pair.
+  printf "cycle_%s_cold_begin_utc=%s\\n" "$i" "$(date -u +%FT%TZ)" >> "$OUT/manifest.txt"
   "${ADB[@]}" shell am force-stop "$PKG"
   sleep 2
   "${ADB[@]}" shell am start -W -n "$COMP" > "$OUT/startup/cold-$i.txt"
@@ -75,10 +90,21 @@ for ((i=1;i<=RUNS;i++)); do
   capture_memory idle60 "$i"
   sleep "$((IDLE_LONG > IDLE_SHORT ? IDLE_LONG-IDLE_SHORT : 0))"
   capture_memory idle300 "$i"
+  printf "cycle_%s_idle300_end_utc=%s\\n" "$i" "$(date -u +%FT%TZ)" >> "$OUT/manifest.txt"
+  "${ADB[@]}" shell pidof "$PKG" > "$OUT/startup/pid-before-$i.txt" || true
+  # HOME-switch evidence is observational; HOME may route to this same launcher.
+  "${ADB[@]}" shell input keyevent KEYCODE_HOME
+  sleep 2
+  "${ADB[@]}" shell dumpsys activity activities > "$OUT/startup/home-foreground-$i.txt"
+  "${ADB[@]}" shell pidof "$PKG" > "$OUT/startup/pid-after-home-$i.txt" || true
+  "${ADB[@]}" shell am start -W -n "$COMP" > "$OUT/startup/home-return-$i.txt"
+  "${ADB[@]}" shell dumpsys activity activities > "$OUT/startup/home-return-foreground-$i.txt"
   # Navigate to system Settings rather than sending HOME (which may resolve to BaroLauncher).
   # If Settings cannot launch, mark this warm-return sample unavailable.
   if "${ADB[@]}" shell am start -W -a android.settings.SETTINGS > "$OUT/startup/away-$i.txt" 2>&1; then
     sleep 2
+    "${ADB[@]}" shell dumpsys activity activities > "$OUT/startup/settings-foreground-$i.txt"
+    "${ADB[@]}" shell pidof "$PKG" > "$OUT/startup/pid-before-settings-return-$i.txt" || true
     "${ADB[@]}" shell am start -W -n "$COMP" > "$OUT/startup/warm-return-$i.txt"
     printf 'warm_return_from_settings,%s,%s,startup/warm-return-%s.txt\n' "$i" "$(date -u +%FT%TZ)" "$i" >> "$OUT/startup/index.csv"
   else
