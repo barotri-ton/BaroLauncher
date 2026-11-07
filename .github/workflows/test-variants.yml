@@ -1,0 +1,49 @@
+name: Test variants
+
+# Diagnostic only: builds the launcher at several earlier commits in one run (so they share one signing key) and
+# publishes them to the "test-variants" pre-release, to find which change makes an install fail on a TV.
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/material-tv-launcher-android9-zf8pgb]
+    paths: ['.github/workflows/test-variants.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install SDK parts
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" >/dev/null
+      - name: Build one APK per commit
+        run: |
+          git fetch origin pull/7/head:pr7
+          mkdir -p out
+          build() {
+            git worktree add "../w-$1" "$2" >/dev/null 2>&1 || { echo "no such commit: $2"; return; }
+            if (cd "../w-$1" && ./build.sh >/dev/null); then cp "../w-$1/build/material-tv-launcher.apk" "out/$1-$2.apk"; else echo "build failed: $1 $2"; fi
+          }
+          build 1-signing-fix 5a93937
+          build 2-date b29c57d
+          build 3-recent-plays b4f3231
+          build 4-hero-colors 4a7b9c2
+          build 5-panel-folders 3fc3c6f
+          build 6-wallpapers b95eef9
+          ls -la out
+      - name: Publish pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete test-variants --cleanup-tag --yes -R "$GITHUB_REPOSITORY" || true
+          gh release create test-variants out/*.apk -R "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
+            --title "Install test builds (not for daily use)" \
+            --notes "The launcher at six commits, built in one run so they share a signing key. Install them in order; the first that fails shows which change breaks the install."
