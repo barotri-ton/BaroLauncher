@@ -20,7 +20,10 @@ jobs:
           for ref in $(git for-each-ref --format='%(refname:short)' refs/remotes/source/); do
             if [ "$ref" != "source/main" ]; then
               name="${ref#source/}"
-              git push origin "refs/remotes/$ref:refs/heads/$name"
+              git checkout -B "$name" "refs/remotes/$ref"
+              git rm -r --ignore-unmatch .github/workflows
+              git -c user.name="BaroLauncher Import" -c user.email="actions@users.noreply.github.com" commit -m "Import branch history; defer workflow restoration" || true
+              git push origin "$name"
             fi
           done
           git push origin --tags
