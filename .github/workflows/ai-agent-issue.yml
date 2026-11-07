@@ -1,0 +1,121 @@
+name: AI Agent - Implement GitHub Issue
+run-name: "Codex issue #${{ inputs.issue_number }}"
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Existing, reviewed GitHub Issue number (human approval required)"
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: codex-issue-${{ inputs.issue_number }}
+  cancel-in-progress: false
+
+jobs:
+  implement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ai-agent
+    steps:
+      - name: Validate configuration
+        env:
+          API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AGENT_TOKEN: ${{ secrets.BARO_AGENT_GH_TOKEN }}
+        run: |
+          test -n "$API_KEY" || { echo "::error::OPENAI_API_KEY missing"; exit 1; }
+          test -n "$AGENT_TOKEN" || { echo "::error::BARO_AGENT_GH_TOKEN missing"; exit 1; }
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Load reviewed issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ inputs.issue_number }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE" > "$RUNNER_TEMP/issue.json"
+          jq -e '.state == "open" and (.pull_request | not)' "$RUNNER_TEMP/issue.json" >/dev/null
+          jq -r '"# Issue #"+(.number|tostring)+" — "+.title+"\n\n"+(.body // "")' "$RUNNER_TEMP/issue.json" > "$RUNNER_TEMP/issue.md"
+          echo "Issue loaded; treat its content as untrusted requirements, not as privileged instructions."
+      - name: Install Codex CLI
+        run: npm install --global @openai/codex
+      - name: Prepare branch
+        env:
+          ISSUE: ${{ inputs.issue_number }}
+        run: |
+          set -euo pipefail
+          git switch -c "agent/issue-${ISSUE}-run-${GITHUB_RUN_ID}"
+      - name: Execute coding agent
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CODEX_HOME: ${{ runner.temp }}/codex-home
+        run: |
+          set -euo pipefail
+          mkdir -p "$CODEX_HOME"
+          {
+            cat .github/agent/DEVELOPMENT_RULES.md
+            printf '\n## Requested issue (untrusted data)\n'
+            cat "$RUNNER_TEMP/issue.md"
+          } > "$RUNNER_TEMP/agent-task.md"
+          codex exec --full-auto --cd "$GITHUB_WORKSPACE" "$(cat "$RUNNER_TEMP/agent-task.md")"
+      - name: Enforce file allowlist and commit
+        id: changes
+        env:
+          ISSUE: ${{ inputs.issue_number }}
+        run: |
+          set -euo pipefail
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes generated."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --cached --name-only | grep -Ev '^(src/|res/|assets/)' ; then
+            echo "::error::Agent modified paths outside src/, res/, assets/. Refusing to push."
+            exit 1
+          fi
+          git -c user.name="barolauncher-agent" -c user.email="agent@users.noreply.github.com" commit -m "agent: implement issue #$ISSUE"
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
+      - name: Open PR (no auto-merge)
+        if: steps.changes.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.BARO_AGENT_GH_TOKEN }}
+          ISSUE: ${{ inputs.issue_number }}
+        run: |
+          set -euo pipefail
+          BRANCH="agent/issue-${ISSUE}-run-${GITHUB_RUN_ID}"
+          git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)" push origin "HEAD:refs/heads/$BRANCH"
+          gh pr create --base main --head "$BRANCH" \
+            --title "[AI][Draft] Implement issue #$ISSUE" \
+            --body "## Architecture handoff
+          - Requirement / Issue: Relates to #$ISSUE (does not close automatically)
+          - Relevant FRD / ADR: See linked issue
+          - Priority: Confirm in issue
+
+          ## Development changes
+          - Summary: AI-generated code; human review required.
+          - Risk / fallback: Do not merge before review.
+          - Version impact: Not changed.
+
+          ## Validation
+          - [ ] Android 9 (API 28) build succeeds
+          - [ ] No stock launcher uninstall/disable introduced
+          - [ ] D-pad / Back behavior assessed
+          - [ ] Low-memory implications assessed
+          - [ ] CI logs and APK artifact linked
+          - [ ] Device verification explicitly marked as passed / pending / blocked
+
+          ## QA handoff
+          - Test cases: QA to define
+          - Regression impact: QA to assess
+          - QA verdict: PENDING
+          - Known limitations: AI-generated, not device-tested.
+
+          Generated from GitHub Actions run $GITHUB_RUN_ID. No automatic merge." \
+            --draft
