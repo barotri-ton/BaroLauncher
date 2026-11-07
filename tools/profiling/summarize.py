@@ -63,7 +63,20 @@ def main(root):
                 "apk_sha256", "apk_provenance", "installed_app_count")
     if any(not metadata.get(k) or "RECORD_" in metadata[k] for k in required):
         raise ValueError("Required metadata missing or placeholder")
+    if not re.fullmatch(r"[a-fA-F0-9]{64}", metadata["apk_sha256"]):
+        raise ValueError("Invalid APK SHA-256")
+    installed = metadata.get("installed_apk_sha256", "UNAVAILABLE")
+    if installed != "UNAVAILABLE" and not re.fullmatch(r"[a-fA-F0-9]{64}", installed):
+        raise ValueError("Invalid installed APK SHA-256")
+    if installed != "UNAVAILABLE" and installed.lower() != metadata["apk_sha256"].lower():
+        raise ValueError("Installed APK SHA differs from local artifact")
+    if metadata["network_state"] not in ("on", "off"):
+        raise ValueError("Invalid network state")
+    if not metadata["installed_app_count"].isdigit():
+        raise ValueError("Invalid installed app count")
     count = int(metadata["runs"])
+    if count < 1:
+        raise ValueError("Invalid run count")
     if metadata["api"] != "28" or metadata["kind"] not in ("emulator", "hardware"):
         raise ValueError("Invalid API/kind")
     rows = []
@@ -95,7 +108,9 @@ def main(root):
         writer.writerow(["intended_vsync_ns", "frame_completed_ns", "duration_ms"])
         for (start, end), ms in sorted(frames.items()):
             writer.writerow([start, end, ms])
-    lines = ["PSS is proportional-set-size KiB; heap_alloc_kb is allocated heap KiB, NOT PSS.",
+    lines = [f"installed_apk_sha256_verification={'MATCH' if installed != 'UNAVAILABLE' else 'UNAVAILABLE'}",
+             "HOME-switch is observational: inspect home-foreground, home-return, and PID files.",
+             "PSS is proportional-set-size KiB; heap_alloc_kb is allocated heap KiB, NOT PSS.",
              "Startup TotalTime is ActivityManager timing, NOT first frame or visual readiness.",
              "Frames deduplicated by (intended_vsync, frame_completed) across snapshots."]
     incomplete = False
