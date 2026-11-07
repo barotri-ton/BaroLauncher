@@ -29,7 +29,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: barolauncher-android9-apk
-          path: build/material-tv-launcher.apk
+          path: build/BaroLauncher.apk
           if-no-files-found: error
           retention-days: 30
       - name: Publish release (not on pull requests)
@@ -40,13 +40,13 @@ jobs:
           VERSION=$(sed -n 's/^VERSION_NAME=//p' VERSION)
           TAG=android9-latest
           # The same APK twice: a fixed name (install.sh and the download link rely on it) and one carrying the version.
-          cp build/material-tv-launcher.apk "build/barolauncher-v$VERSION.apk"
+          cp build/BaroLauncher.apk "build/BaroLauncher-v$VERSION.apk"
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" build/material-tv-launcher.apk "build/barolauncher-v$VERSION.apk" install.sh uninstall.sh --clobber -R "$GITHUB_REPOSITORY"
+            gh release upload "$TAG" build/BaroLauncher.apk "build/BaroLauncher-v$VERSION.apk" install.sh uninstall.sh --clobber -R "$GITHUB_REPOSITORY"
             gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --title "Android 9 build v$VERSION" \
               --notes "BaroLauncher $VERSION for Android 9+ (API 28). Built from $GITHUB_SHA."
           else
-            gh release create "$TAG" build/material-tv-launcher.apk "build/barolauncher-v$VERSION.apk" install.sh uninstall.sh -R "$GITHUB_REPOSITORY" \
+            gh release create "$TAG" build/BaroLauncher.apk "build/BaroLauncher-v$VERSION.apk" install.sh uninstall.sh -R "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" --title "Android 9 build v$VERSION" \
               --notes "BaroLauncher $VERSION for Android 9+ (API 28). Built from $GITHUB_SHA."
           fi
