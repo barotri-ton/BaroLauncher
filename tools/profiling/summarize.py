@@ -48,6 +48,29 @@ def main(root):
         writer = csv.DictWriter(f, fieldnames=["sample", "total_ms", "wait_ms"])
         writer.writeheader()
         writer.writerows(starts)
+    frames = []
+    for path in sorted((root / "frames").glob("*.txt")):
+        raw = path.read_text(errors="replace")
+        inside = False
+        for line in raw.splitlines():
+            if line.startswith("---PROFILEDATA---"):
+                inside = not inside
+                continue
+            if not inside or line.startswith("Flags,"):
+                continue
+            parts = line.split(",")
+            if len(parts) < 14:
+                continue
+            try:
+                # Android gfxinfo framestats: intendedVsync index 1, frameCompleted index 13.
+                flags = int(parts[0]); start = int(parts[1]); end = int(parts[13])
+                if flags == 0 and end > start:
+                    frames.append((end - start) / 1_000_000)
+            except ValueError:
+                continue
+    logpath = root / "logs" / "logcat.txt"
+    logs = logpath.read_text(errors="replace") if logpath.exists() else ""
+    gc_events = sum(1 for line in logs.splitlines() if re.search(r"\b(?:concurrent|explicit|background|alloc|young)\s+(?:mark\s+)?(?:sweep|GC)|\bGC_FOR_|\bGC_CONCURRENT", line, re.I))
     with (root / "summary.txt").open("w") as f:
         f.write("EMULATOR/HARDWARE designation: see manifest.txt\n")
         f.write("Memory values: KiB; startup values: ms. Missing metrics remain blank.\n")
