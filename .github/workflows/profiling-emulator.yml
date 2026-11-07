@@ -41,7 +41,7 @@ jobs:
             adb wait-for-device
             ready=0
             for attempt in $(seq 1 30); do
-              if [ "$(adb shell getprop sys.boot_completed | tr -d '\\r')" = "1" ] && adb shell cmd package list packages >/dev/null 2>&1; then
+              if [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1" ] && adb shell cmd package list packages >/dev/null 2>&1; then
                 ready=1
                 break
               fi
