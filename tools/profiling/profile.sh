@@ -84,7 +84,26 @@ for ((i=1;i<=RUNS;i++)); do
   printf "cycle_%s_cold_begin_utc=%s\n" "$i" "$(date -u +%FT%TZ)" >> "$OUT/manifest.txt"
   "${ADB[@]}" shell am force-stop "$PKG"
   sleep 2
-  "${ADB[@]}" shell am start -W -n "$COMP" > "$OUT/startup/cold-$i.txt"
+  # API28 emulator can lose its ActivityManager binder after ADB install/settle.
+  # Retry only the launch; retain all attempts for diagnosis and never claim a cold start on failure.
+  launched=0
+  for attempt in 1 2 3; do
+    if timeout 90s "${ADB[@]}" shell am start -W -n "$COMP" > "$OUT/startup/cold-$i.txt" 2> "$OUT/startup/cold-$i-stderr.txt" && ! grep -Eq 'Failure calling service|Broken pipe|Error:' "$OUT/startup/cold-$i.txt"; then
+      launched=1
+      break
+    fi
+    cp "$OUT/startup/cold-$i.txt" "$OUT/startup/cold-$i-attempt-$attempt.txt"
+    echo "Cold launch $i attempt $attempt failed; waiting for emulator ADB/ActivityManager recovery" >&2
+    timeout 90s "${ADB[@]}" wait-for-device || true
+    sleep 15
+  done
+  if (( launched != 1 )); then
+    printf 'cycle_%s_failure=cold_launch_activity_manager_unavailable\n' "$i" >> "$OUT/manifest.txt"
+    "${ADB[@]}" logcat -d -v threadtime > "$OUT/logs/logcat-failure.txt" 2>&1 || true
+    "${ADB[@]}" shell dumpsys activity activities > "$OUT/logs/activity-failure.txt" 2>&1 || true
+    echo "ERROR: cycle $i could not cold-start after three attempts; see raw diagnostics" >&2
+    exit 1
+  fi
   printf 'cold,%s,%s,startup/cold-%s.txt\n' "$i" "$(date -u +%FT%TZ)" "$i" >> "$OUT/startup/index.csv"
   sleep "$IDLE_SHORT"
   capture_memory idle60 "$i"
