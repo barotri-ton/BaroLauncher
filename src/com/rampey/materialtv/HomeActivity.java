@@ -333,15 +333,15 @@ public class HomeActivity extends Activity {
         if (prefs.colorSeed() != 0) palette = Palette.of(prefs.colorSeed());
         setContentView(buildRoot());
         android.util.Log.i("BaroStartup", "onCreate.contentViewReady elapsedRealtimeNs=" + android.os.SystemClock.elapsedRealtimeNanos());
-        // First pre-draw is a UI traversal milestone, NOT proof of first visible frame.
+        // Exactly one pre-draw marker per Activity instance. This is NOT first visible frame.
         final android.view.View decor = getWindow().getDecorView();
-        decor.getViewTreeObserver().addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
+        final android.view.ViewTreeObserver observer = decor.getViewTreeObserver();
+        observer.addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
             @Override public boolean onPreDraw() {
-                android.util.Log.i("BaroStartup", "firstPreDraw elapsedRealtimeNs=" + android.os.SystemClock.elapsedRealtimeNanos());
-                decor.post(() -> {
-                    if (decor.getViewTreeObserver().isAlive())
-                        decor.getViewTreeObserver().removeOnPreDrawListener(this);
-                });
+                if (observer.isAlive()) observer.removeOnPreDrawListener(this);
+                android.util.Log.i("BaroStartup", "firstPreDraw activity=" + System.identityHashCode(HomeActivity.this)
+                        + " view=" + System.identityHashCode(decor)
+                        + " elapsedRealtimeNs=" + android.os.SystemClock.elapsedRealtimeNanos());
                 return true;
             }
         });
