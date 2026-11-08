@@ -54,5 +54,5 @@ fi
 # v1 + v2 only. On a projector running Android 9, the build signed with the default v3 block failed to install ("problem
 # parsing the package") while the same code signed with v1 + v2 installed, so v3 is the likely cause (not confirmed on the
 # device). v3 only matters for key rotation, which this app does not use.
-"$BT/apksigner" sign --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled false --ks "$KS" --ks-key-alias "$ALIAS" --ks-pass "pass:$PASS" --key-pass "pass:$PASS" --out "$OUT/material-tv-launcher.apk" "$OUT/aligned.apk"
-"$BT/apksigner" verify "$OUT/material-tv-launcher.apk" && ls -la "$OUT/material-tv-launcher.apk"
+"$BT/apksigner" sign --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled false --ks "$KS" --ks-key-alias "$ALIAS" --ks-pass "pass:$PASS" --key-pass "pass:$PASS" --out "$OUT/BaroLauncher.apk" "$OUT/aligned.apk"
+"$BT/apksigner" verify "$OUT/BaroLauncher.apk" && ls -la "$OUT/BaroLauncher.apk"

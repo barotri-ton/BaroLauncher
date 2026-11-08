@@ -323,6 +323,8 @@ public class HomeActivity extends Activity {
     };
 
     @Override protected void onCreate(Bundle state) {
+        final long startupBeginNs = android.os.SystemClock.elapsedRealtimeNanos();
+        android.util.Log.i("BaroStartup", "onCreate.begin elapsedRealtimeNs=" + startupBeginNs);
         super.onCreate(state);
         pm = getPackageManager();
         prefs = new Prefs(this);
@@ -330,6 +332,26 @@ public class HomeActivity extends Activity {
         Motion.setReduced(prefs.reducedMotion());
         if (prefs.colorSeed() != 0) palette = Palette.of(prefs.colorSeed());
         setContentView(buildRoot());
+        android.util.Log.i("BaroStartup", "onCreate.contentViewReady elapsedRealtimeNs=" + android.os.SystemClock.elapsedRealtimeNanos());
+        // Exactly one pre-draw marker per Activity instance. This is NOT first visible frame.
+        final android.view.View decor = getWindow().getDecorView();
+        final android.view.ViewTreeObserver observer = decor.getViewTreeObserver();
+        observer.addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
+            private boolean reported;
+            @Override public boolean onPreDraw() {
+                // A ViewTreeObserver may be replaced on attach. Remove from the active
+                // observer and guard against duplicate callbacks from a stale observer.
+                if (reported) return true;
+                reported = true;
+                android.view.ViewTreeObserver active = decor.getViewTreeObserver();
+                if (active.isAlive()) active.removeOnPreDrawListener(this);
+                if (observer != active && observer.isAlive()) observer.removeOnPreDrawListener(this);
+                android.util.Log.i("BaroStartup", "firstPreDraw activity=" + System.identityHashCode(HomeActivity.this)
+                        + " view=" + System.identityHashCode(decor)
+                        + " elapsedRealtimeNs=" + android.os.SystemClock.elapsedRealtimeNanos());
+                return true;
+            }
+        });
         openStartApp();
     }
 
@@ -346,6 +368,7 @@ public class HomeActivity extends Activity {
     }
 
     @Override protected void onResume() {
+        android.util.Log.i("BaroStartup", "onResume.begin elapsedRealtimeNs=" + android.os.SystemClock.elapsedRealtimeNanos());
         super.onResume();
         Set<String> checkedPackages = new java.util.HashSet<>();
         for (WatchNext.Item item : prefs.recent()) {
@@ -528,6 +551,9 @@ public class HomeActivity extends Activity {
         });
         managerPage.setVisibility(View.GONE);
         pages.addView(managerPage, match());
+        // Populate Continue only after buildHomePage initializes homeContinue/homeContinueRow.
+        fillHomeContinue();
+        applyContinueTab();
         return root;
     }
 
@@ -563,8 +589,6 @@ public class HomeActivity extends Activity {
                     else showQuickPanel();
                 });
         nav.select(0);
-        fillHomeContinue();
-        applyContinueTab();
         nav.button(3).setOnLongClickListener(v -> {
             showLauncherSettings();
             return true;
