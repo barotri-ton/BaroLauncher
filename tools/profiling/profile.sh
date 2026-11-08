@@ -95,6 +95,8 @@ for ((i=1;i<=RUNS;i++)); do
   # Independent cold launch for every 60s/300s sample pair.
   printf "cycle_%s_cold_begin_utc=%s\n" "$i" "$(date -u +%FT%TZ)" >> "$OUT/manifest.txt"
   record_host "$i" before-cold
+  "${ADB[@]}" shell cat /proc/uptime > "$OUT/timeline/device-uptime-before-$i.txt"
+  cat /proc/uptime > "$OUT/host/uptime-before-$i.txt"
   "${ADB[@]}" shell log -t BaroProfile "cycle=$i phase=cold_begin" || true
   printf "force_stop_begin_cycle_%s_utc=%s\n" "$i" "$(date -u +%FT%TZ)" >> "$OUT/timeline/force-stop-events.txt"
   "${ADB[@]}" shell am force-stop "$PKG" > "$OUT/timeline/force-stop-$i-stdout.txt" 2> "$OUT/timeline/force-stop-$i-stderr.txt"
@@ -123,6 +125,9 @@ for ((i=1;i<=RUNS;i++)); do
   fi
   printf 'cold,%s,%s,startup/cold-%s.txt\n' "$i" "$(date -u +%FT%TZ)" "$i" >> "$OUT/startup/index.csv"
   record_host "$i" after-cold
+  "${ADB[@]}" shell cat /proc/uptime > "$OUT/timeline/device-uptime-after-$i.txt"
+  cat /proc/uptime > "$OUT/host/uptime-after-$i.txt"
+  "${ADB[@]}" shell pidof "$PKG" > "$OUT/timeline/process-pid-after-cold-$i.txt" || true
   "${ADB[@]}" shell log -t BaroProfile "cycle=$i phase=cold_end" || true
   "${ADB[@]}" shell logcat -d -v epoch -s BaroStartup:I BaroProfile:I ActivityManager:I "*:S" > "$OUT/timeline/startup-logcat-$i.txt" || true
   "${ADB[@]}" shell dumpsys activity "$PKG" > "$OUT/timeline/activity-after-cold-$i.txt" 2>&1 || true
