@@ -77,6 +77,37 @@ for i in range(1, 6):
 for r in host_rows:
     assert all(r.values()), "Incomplete host metrics"
     datetime.fromisoformat(r["utc"].replace("Z", "+00:00"))
+# Each cycle must contain its own ordered lifecycle sequence, bounded by its cold markers.
+# These milestones do not establish first visible frame or fully drawn.
+for i in range(1, 6):
+    log = (root / "timeline" / f"startup-logcat-{i}.txt").read_text()
+    begin = re.findall(r"^.*BaroProfile: cycle=" + str(i) + r" phase=cold_begin.*$", log, re.M)
+    end = re.findall(r"^.*BaroProfile: cycle=" + str(i) + r" phase=cold_end.*$", log, re.M)
+    assert len(begin) == 1 and len(end) == 1, f"Cycle {i}: missing/duplicated phase markers"
+    a = log.index(begin[0])
+    b = log.index(end[0])
+    assert a < b, f"Cycle {i}: reversed cold phase markers"
+    segment = log[a:b]
+    names = ("onCreate.begin", "onCreate.contentViewReady", "onResume.begin", "firstPreDraw")
+    stamps = []
+    for name in names:
+        matches = re.findall(
+            r"BaroStartup: " + re.escape(name) + r"[^\n]*?elapsedRealtimeNs=(\d+)",
+            segment,
+        )
+        assert len(matches) == 1, f"Cycle {i}: expected one {name}, got {len(matches)}"
+        stamps.append(int(matches[0]))
+    assert stamps == sorted(stamps), f"Cycle {i}: lifecycle timestamp order invalid"
+    assert stamps[-1] - stamps[0] < 30_000_000_000, f"Cycle {i}: lifecycle exceeds 30 seconds"
+    for path in (
+        root / "timeline" / f"device-uptime-before-{i}.txt",
+        root / "timeline" / f"device-uptime-after-{i}.txt",
+        root / "timeline" / f"process-pid-after-cold-{i}.txt",
+        root / "host" / f"uptime-before-{i}.txt",
+        root / "host" / f"uptime-after-{i}.txt",
+    ):
+        assert path.is_file() and path.stat().st_size > 0, f"Missing timing evidence: {path}"
+
 assert (root / "logs" / "logcat.txt").exists()
 print("PASS: five-cycle baseline evidence, CSV completeness, PID continuity, safety snapshots.")
 print("MANUAL QA REQUIRED: actual foreground activity, HOME switched externally, network/toggles, visual readiness, frame comparability, phase-correlated logcat.")
