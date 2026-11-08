@@ -323,6 +323,8 @@ public class HomeActivity extends Activity {
     };
 
     @Override protected void onCreate(Bundle state) {
+        final long startupBeginNs = android.os.SystemClock.elapsedRealtimeNanos();
+        android.util.Log.i("BaroStartup", "onCreate.begin elapsedRealtimeNs=" + startupBeginNs);
         super.onCreate(state);
         pm = getPackageManager();
         prefs = new Prefs(this);
@@ -330,6 +332,19 @@ public class HomeActivity extends Activity {
         Motion.setReduced(prefs.reducedMotion());
         if (prefs.colorSeed() != 0) palette = Palette.of(prefs.colorSeed());
         setContentView(buildRoot());
+        android.util.Log.i("BaroStartup", "onCreate.contentViewReady elapsedRealtimeNs=" + android.os.SystemClock.elapsedRealtimeNanos());
+        // First pre-draw is a UI traversal milestone, NOT proof of first visible frame.
+        final android.view.View decor = getWindow().getDecorView();
+        decor.getViewTreeObserver().addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
+            @Override public boolean onPreDraw() {
+                android.util.Log.i("BaroStartup", "firstPreDraw elapsedRealtimeNs=" + android.os.SystemClock.elapsedRealtimeNanos());
+                decor.post(() -> {
+                    if (decor.getViewTreeObserver().isAlive())
+                        decor.getViewTreeObserver().removeOnPreDrawListener(this);
+                });
+                return true;
+            }
+        });
         openStartApp();
     }
 
@@ -346,6 +361,7 @@ public class HomeActivity extends Activity {
     }
 
     @Override protected void onResume() {
+        android.util.Log.i("BaroStartup", "onResume.begin elapsedRealtimeNs=" + android.os.SystemClock.elapsedRealtimeNanos());
         super.onResume();
         Set<String> checkedPackages = new java.util.HashSet<>();
         for (WatchNext.Item item : prefs.recent()) {
