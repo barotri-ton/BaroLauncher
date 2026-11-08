@@ -50,6 +50,16 @@ jobs:
           if [ -f evidence/profiling/ci-emulator-5-cycle/environment/accessibility-before.txt ] && [ -f evidence/profiling/ci-emulator-5-cycle/environment/accessibility-after.txt ]; then
             diff -u evidence/profiling/ci-emulator-5-cycle/environment/accessibility-before.txt evidence/profiling/ci-emulator-5-cycle/environment/accessibility-after.txt
           fi
+      - name: Verify installed and enabled package safety snapshots
+        if: always()
+        run: |
+          root=evidence/profiling/ci-emulator-5-cycle/environment
+          if [ -f "$root/disabled-packages-before.txt" ] && [ -f "$root/disabled-packages-after.txt" ]; then
+            diff -u "$root/disabled-packages-before.txt" "$root/disabled-packages-after.txt"
+          fi
+          if [ -f "$root/enabled-packages-before.txt" ] && [ -f "$root/enabled-packages-after.txt" ]; then
+            diff -u "$root/enabled-packages-before.txt" "$root/enabled-packages-after.txt"
+          fi
       - name: Upload raw evidence even on failure
         if: always()
         uses: actions/upload-artifact@v4
