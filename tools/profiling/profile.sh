@@ -39,8 +39,17 @@ if [[ "$KIND" == emulator && "$SERIAL" != emulator-* ]]; then echo "Emulator kin
 if [[ "$KIND" == hardware && "$SERIAL" == emulator-* ]]; then echo "Hardware kind cannot use emulator serial" >&2; exit 1; fi
 "${ADB[@]}" shell pm path "$PKG" | grep -q '^package:' || { echo "Install $PKG first" >&2; exit 1; }
 OUT="${OUT:-evidence/profiling/$KIND-$(date -u +%Y%m%dT%H%M%SZ)}"
-mkdir -p "$OUT"/{environment,startup,memory,frames,logs,screenshots,timeline}
+mkdir -p "$OUT"/{environment,startup,memory,frames,logs,screenshots,timeline,host}
 printf 'filename,utc,context\n' > "$OUT/screenshots/index.csv"
+printf 'cycle,phase,utc,host_loadavg,host_mem_available_kb\n' > "$OUT/host/index.csv"
+record_host() {
+  local cycle="$1" phase="$2" load available
+  load=$(cut -d " " -f 1-3 /proc/loadavg | tr " " ";")
+  available=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+  printf '%s,%s,%s,%s,%s\n' "$cycle" "$phase" "$(date -u +%FT%TZ)" "$load" "$available" >> "$OUT/host/index.csv"
+  cat /proc/stat > "$OUT/host/cpu-${cycle}-${phase}.txt"
+  cat /proc/pressure/cpu > "$OUT/host/pressure-${cycle}-${phase}.txt" 2>/dev/null || printf 'unavailable\n' > "$OUT/host/pressure-${cycle}-${phase}.txt"
+}
 printf 'kind=%s\nserial=%s\napi=%s\nstart_utc=%s\nruns=%s\nsettle_seconds=%s\nshort_idle_seconds=%s\nlong_idle_seconds=%s\n' "$KIND" "$SERIAL" "$API" "$(date -u +%FT%TZ)" "$RUNS" "$SETTLE" "$IDLE_SHORT" "$IDLE_LONG" > "$OUT/manifest.txt"
 for prop in ro.product.model ro.build.fingerprint ro.product.cpu.abi ro.config.low_ram; do
   printf '%s=%s\n' "$prop" "$("${ADB[@]}" shell getprop "$prop" | tr -d '\r')" >> "$OUT/manifest.txt"
@@ -85,8 +94,9 @@ printf 'phase,sample,utc\n' > "$OUT/memory/index.csv"
 for ((i=1;i<=RUNS;i++)); do
   # Independent cold launch for every 60s/300s sample pair.
   printf "cycle_%s_cold_begin_utc=%s\n" "$i" "$(date -u +%FT%TZ)" >> "$OUT/manifest.txt"
-  "${ADB[@]}" shell dumpsys gfxinfo "$PKG" reset > "$OUT/timeline/gfx-reset-cold-$i.txt" 2>&1 || true
+  record_host "$i" before-cold
   "${ADB[@]}" shell am force-stop "$PKG"
+  "${ADB[@]}" shell dumpsys gfxinfo "$PKG" reset > "$OUT/timeline/gfx-reset-cold-$i.txt" 2>&1 || true
   sleep 2
   # API28 emulator can lose its ActivityManager binder after ADB install/settle.
   # Retry only the launch; retain all attempts for diagnosis and never claim a cold start on failure.
@@ -109,6 +119,8 @@ for ((i=1;i<=RUNS;i++)); do
     exit 1
   fi
   printf 'cold,%s,%s,startup/cold-%s.txt\n' "$i" "$(date -u +%FT%TZ)" "$i" >> "$OUT/startup/index.csv"
+  record_host "$i" after-cold
+  "${ADB[@]}" shell dumpsys activity "$PKG" > "$OUT/timeline/activity-after-cold-$i.txt" 2>&1 || true
   "${ADB[@]}" shell dumpsys gfxinfo "$PKG" framestats > "$OUT/timeline/cold-launch-frames-$i.txt" || true
   "${ADB[@]}" shell dumpsys activity activities > "$OUT/timeline/cold-launch-foreground-$i.txt" || true
   if (( i == 1 )); then
