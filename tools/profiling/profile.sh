@@ -39,7 +39,7 @@ if [[ "$KIND" == emulator && "$SERIAL" != emulator-* ]]; then echo "Emulator kin
 if [[ "$KIND" == hardware && "$SERIAL" == emulator-* ]]; then echo "Hardware kind cannot use emulator serial" >&2; exit 1; fi
 "${ADB[@]}" shell pm path "$PKG" | grep -q '^package:' || { echo "Install $PKG first" >&2; exit 1; }
 OUT="${OUT:-evidence/profiling/$KIND-$(date -u +%Y%m%dT%H%M%SZ)}"
-mkdir -p "$OUT"/{environment,startup,memory,frames,logs}
+mkdir -p "$OUT"/{environment,startup,memory,frames,logs,screenshots}
 printf 'kind=%s\nserial=%s\napi=%s\nstart_utc=%s\nruns=%s\nsettle_seconds=%s\nshort_idle_seconds=%s\nlong_idle_seconds=%s\n' "$KIND" "$SERIAL" "$API" "$(date -u +%FT%TZ)" "$RUNS" "$SETTLE" "$IDLE_SHORT" "$IDLE_LONG" > "$OUT/manifest.txt"
 for prop in ro.product.model ro.build.fingerprint ro.product.cpu.abi ro.config.low_ram; do
   printf '%s=%s\n' "$prop" "$("${ADB[@]}" shell getprop "$prop" | tr -d '\r')" >> "$OUT/manifest.txt"
@@ -105,6 +105,15 @@ for ((i=1;i<=RUNS;i++)); do
     exit 1
   fi
   printf 'cold,%s,%s,startup/cold-%s.txt\n' "$i" "$(date -u +%FT%TZ)" "$i" >> "$OUT/startup/index.csv"
+  if (( i == 1 )); then
+    sleep 3
+    if "${ADB[@]}" exec-out screencap -p > "$OUT/screenshots/launcher-home.png" && [[ -s "$OUT/screenshots/launcher-home.png" ]]; then
+      echo "Captured launcher HOME screenshot"
+    else
+      rm -f "$OUT/screenshots/launcher-home.png"
+      echo "WARNING: launcher screenshot unavailable" >&2
+    fi
+  fi
   sleep "$IDLE_SHORT"
   capture_memory idle60 "$i"
   sleep "$((IDLE_LONG > IDLE_SHORT ? IDLE_LONG-IDLE_SHORT : 0))"
@@ -123,6 +132,14 @@ for ((i=1;i<=RUNS;i++)); do
   if "${ADB[@]}" shell am start -W -a android.settings.SETTINGS > "$OUT/startup/away-$i.txt" 2>&1; then
     sleep 2
     "${ADB[@]}" shell dumpsys activity activities > "$OUT/startup/settings-foreground-$i.txt"
+    if (( i == 1 )); then
+      if "${ADB[@]}" exec-out screencap -p > "$OUT/screenshots/android-settings.png" && [[ -s "$OUT/screenshots/android-settings.png" ]]; then
+        echo "Captured Android Settings screenshot"
+      else
+        rm -f "$OUT/screenshots/android-settings.png"
+        echo "WARNING: Settings screenshot unavailable" >&2
+      fi
+    fi
     "${ADB[@]}" shell pidof "$PKG" > "$OUT/startup/pid-before-settings-return-$i.txt" || true
     "${ADB[@]}" shell am start -W -n "$COMP" > "$OUT/startup/warm-return-$i.txt"
     printf 'warm_return_from_settings,%s,%s,startup/warm-return-%s.txt\n' "$i" "$(date -u +%FT%TZ)" "$i" >> "$OUT/startup/index.csv"
