@@ -52,6 +52,31 @@ for i in range(1, 6):
     assert (root / "startup" / f"pid-before-settings-return-{i}.txt").read_text().strip(), "Process not alive before Settings return"
     assert (root / "startup" / f"pid-before-{i}.txt").read_text().strip() == (root / "startup" / f"pid-after-home-{i}.txt").read_text().strip(), "PID changed across HOME"
     assert (root / "startup" / f"pid-before-{i}.txt").read_text().strip() == (root / "startup" / f"pid-before-settings-return-{i}.txt").read_text().strip(), "PID changed across Settings"
+# New instrumentation is mandatory; no silent acceptance of absent artifacts.
+for name in ("enabled-packages", "disabled-packages"):
+    before = (root / "environment" / f"{name}-before.txt").read_bytes()
+    after = (root / "environment" / f"{name}-after.txt").read_bytes()
+    assert before == after, f"{name} changed"
+with (root / "screenshots" / "index.csv").open(newline="") as f:
+    screenshots = list(csv.DictReader(f))
+assert {r["filename"] for r in screenshots} == {"launcher-home.png", "android-settings.png"}
+for r in screenshots:
+    datetime.fromisoformat(r["utc"].replace("Z", "+00:00"))
+    png = (root / "screenshots" / r["filename"]).read_bytes()
+    assert png.startswith(bytes.fromhex("89504e470d0a1a0a")) and len(png) > 100, "Invalid PNG"
+with (root / "host" / "index.csv").open(newline="") as f:
+    host_rows = list(csv.DictReader(f))
+assert len(host_rows) == 10, "Expected host metrics before/after each cold launch"
+for i in range(1, 6):
+    assert {r["phase"] for r in host_rows if r["cycle"] == str(i)} == {"before-cold", "after-cold"}
+    for phase in ("before-cold", "after-cold"):
+        assert (root / "host" / f"cpu-{i}-{phase}.txt").stat().st_size > 0
+        assert (root / "host" / f"pressure-{i}-{phase}.txt").stat().st_size > 0
+    for prefix in ("gfx-reset-cold", "cold-launch-frames", "cold-launch-foreground", "activity-after-cold"):
+        assert (root / "timeline" / f"{prefix}-{i}.txt").exists(), f"Missing {prefix}-{i}"
+for r in host_rows:
+    assert all(r.values()), "Incomplete host metrics"
+    datetime.fromisoformat(r["utc"].replace("Z", "+00:00"))
 assert (root / "logs" / "logcat.txt").exists()
 print("PASS: five-cycle baseline evidence, CSV completeness, PID continuity, safety snapshots.")
 print("MANUAL QA REQUIRED: actual foreground activity, HOME switched externally, network/toggles, visual readiness, frame comparability, phase-correlated logcat.")
