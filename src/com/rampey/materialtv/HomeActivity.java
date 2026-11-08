@@ -337,8 +337,15 @@ public class HomeActivity extends Activity {
         final android.view.View decor = getWindow().getDecorView();
         final android.view.ViewTreeObserver observer = decor.getViewTreeObserver();
         observer.addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
+            private boolean reported;
             @Override public boolean onPreDraw() {
-                if (observer.isAlive()) observer.removeOnPreDrawListener(this);
+                // A ViewTreeObserver may be replaced on attach. Remove from the active
+                // observer and guard against duplicate callbacks from a stale observer.
+                if (reported) return true;
+                reported = true;
+                android.view.ViewTreeObserver active = decor.getViewTreeObserver();
+                if (active.isAlive()) active.removeOnPreDrawListener(this);
+                if (observer != active && observer.isAlive()) observer.removeOnPreDrawListener(this);
                 android.util.Log.i("BaroStartup", "firstPreDraw activity=" + System.identityHashCode(HomeActivity.this)
                         + " view=" + System.identityHashCode(decor)
                         + " elapsedRealtimeNs=" + android.os.SystemClock.elapsedRealtimeNanos());
