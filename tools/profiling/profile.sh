@@ -39,7 +39,8 @@ if [[ "$KIND" == emulator && "$SERIAL" != emulator-* ]]; then echo "Emulator kin
 if [[ "$KIND" == hardware && "$SERIAL" == emulator-* ]]; then echo "Hardware kind cannot use emulator serial" >&2; exit 1; fi
 "${ADB[@]}" shell pm path "$PKG" | grep -q '^package:' || { echo "Install $PKG first" >&2; exit 1; }
 OUT="${OUT:-evidence/profiling/$KIND-$(date -u +%Y%m%dT%H%M%SZ)}"
-mkdir -p "$OUT"/{environment,startup,memory,frames,logs,screenshots}
+mkdir -p "$OUT"/{environment,startup,memory,frames,logs,screenshots,timeline}
+printf 'filename,utc,context\n' > "$OUT/screenshots/index.csv"
 printf 'kind=%s\nserial=%s\napi=%s\nstart_utc=%s\nruns=%s\nsettle_seconds=%s\nshort_idle_seconds=%s\nlong_idle_seconds=%s\n' "$KIND" "$SERIAL" "$API" "$(date -u +%FT%TZ)" "$RUNS" "$SETTLE" "$IDLE_SHORT" "$IDLE_LONG" > "$OUT/manifest.txt"
 for prop in ro.product.model ro.build.fingerprint ro.product.cpu.abi ro.config.low_ram; do
   printf '%s=%s\n' "$prop" "$("${ADB[@]}" shell getprop "$prop" | tr -d '\r')" >> "$OUT/manifest.txt"
@@ -49,6 +50,8 @@ done
 "${ADB[@]}" shell dumpsys package "$PKG" > "$OUT/environment/package.txt"
 "${ADB[@]}" shell cat /proc/meminfo > "$OUT/environment/system-meminfo.txt"
 "${ADB[@]}" shell pm list packages > "$OUT/environment/packages.txt"
+"${ADB[@]}" shell pm list packages -d > "$OUT/environment/disabled-packages-before.txt"
+"${ADB[@]}" shell pm list packages -e > "$OUT/environment/enabled-packages-before.txt"
 "${ADB[@]}" shell settings get secure enabled_accessibility_services > "$OUT/environment/accessibility-before.txt"
 "${ADB[@]}" shell cmd package resolve-activity -a android.intent.action.MAIN -c android.intent.category.HOME > "$OUT/environment/home-before.txt" || true
 printf 'network_state=%s\nfeature_toggles=%s\napk_path=%s\napk_sha256=%s\napk_provenance=local_build_artifact_not_verified_installed\ninstalled_app_count=%s\n' "$NETWORK" "$TOGGLES" "$APK" "$(sha256sum "$APK" | awk '{print $1}')" "$("${ADB[@]}" shell pm list packages -3 | wc -l | tr -d ' ')" >> "$OUT/manifest.txt"
@@ -82,6 +85,7 @@ printf 'phase,sample,utc\n' > "$OUT/memory/index.csv"
 for ((i=1;i<=RUNS;i++)); do
   # Independent cold launch for every 60s/300s sample pair.
   printf "cycle_%s_cold_begin_utc=%s\n" "$i" "$(date -u +%FT%TZ)" >> "$OUT/manifest.txt"
+  "${ADB[@]}" shell dumpsys gfxinfo "$PKG" reset > "$OUT/timeline/gfx-reset-cold-$i.txt" 2>&1 || true
   "${ADB[@]}" shell am force-stop "$PKG"
   sleep 2
   # API28 emulator can lose its ActivityManager binder after ADB install/settle.
@@ -105,9 +109,12 @@ for ((i=1;i<=RUNS;i++)); do
     exit 1
   fi
   printf 'cold,%s,%s,startup/cold-%s.txt\n' "$i" "$(date -u +%FT%TZ)" "$i" >> "$OUT/startup/index.csv"
+  "${ADB[@]}" shell dumpsys gfxinfo "$PKG" framestats > "$OUT/timeline/cold-launch-frames-$i.txt" || true
+  "${ADB[@]}" shell dumpsys activity activities > "$OUT/timeline/cold-launch-foreground-$i.txt" || true
   if (( i == 1 )); then
     sleep 3
     if "${ADB[@]}" exec-out screencap -p > "$OUT/screenshots/launcher-home.png" && [[ -s "$OUT/screenshots/launcher-home.png" ]]; then
+      printf 'launcher-home.png,%s,cycle=1;phase=cold-launch\n' "$(date -u +%FT%TZ)" >> "$OUT/screenshots/index.csv"
       echo "Captured launcher HOME screenshot"
     else
       rm -f "$OUT/screenshots/launcher-home.png"
@@ -134,6 +141,7 @@ for ((i=1;i<=RUNS;i++)); do
     "${ADB[@]}" shell dumpsys activity activities > "$OUT/startup/settings-foreground-$i.txt"
     if (( i == 1 )); then
       if "${ADB[@]}" exec-out screencap -p > "$OUT/screenshots/android-settings.png" && [[ -s "$OUT/screenshots/android-settings.png" ]]; then
+        printf 'android-settings.png,%s,cycle=1;phase=settings\n' "$(date -u +%FT%TZ)" >> "$OUT/screenshots/index.csv"
         echo "Captured Android Settings screenshot"
       else
         rm -f "$OUT/screenshots/android-settings.png"
@@ -148,6 +156,10 @@ for ((i=1;i<=RUNS;i++)); do
   fi
 done
 "${ADB[@]}" shell dumpsys activity processes > "$OUT/environment/activity-processes.txt"
+"${ADB[@]}" shell pm list packages -d > "$OUT/environment/disabled-packages-after.txt"
+"${ADB[@]}" shell pm list packages -e > "$OUT/environment/enabled-packages-after.txt"
+diff -u "$OUT/environment/disabled-packages-before.txt" "$OUT/environment/disabled-packages-after.txt" > "$OUT/environment/disabled-packages-diff.txt" || true
+diff -u "$OUT/environment/enabled-packages-before.txt" "$OUT/environment/enabled-packages-after.txt" > "$OUT/environment/enabled-packages-diff.txt" || true
 "${ADB[@]}" logcat -d -v threadtime > "$OUT/logs/logcat.txt"
 "${ADB[@]}" shell settings get secure enabled_accessibility_services > "$OUT/environment/accessibility-after.txt"
 "${ADB[@]}" shell cmd package resolve-activity -a android.intent.action.MAIN -c android.intent.category.HOME > "$OUT/environment/home-after.txt" || true
