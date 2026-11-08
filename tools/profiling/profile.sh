@@ -95,7 +95,9 @@ for ((i=1;i<=RUNS;i++)); do
   # Independent cold launch for every 60s/300s sample pair.
   printf "cycle_%s_cold_begin_utc=%s\n" "$i" "$(date -u +%FT%TZ)" >> "$OUT/manifest.txt"
   record_host "$i" before-cold
-  "${ADB[@]}" shell am force-stop "$PKG"
+  printf "force_stop_begin_cycle_%s_utc=%s\n" "$i" "$(date -u +%FT%TZ)" >> "$OUT/timeline/force-stop-events.txt"
+  "${ADB[@]}" shell am force-stop "$PKG" > "$OUT/timeline/force-stop-$i-stdout.txt" 2> "$OUT/timeline/force-stop-$i-stderr.txt"
+  printf "force_stop_end_cycle_%s_utc=%s\n" "$i" "$(date -u +%FT%TZ)" >> "$OUT/timeline/force-stop-events.txt"
   "${ADB[@]}" shell dumpsys gfxinfo "$PKG" reset > "$OUT/timeline/gfx-reset-cold-$i.txt" 2>&1 || true
   sleep 2
   # API28 emulator can lose its ActivityManager binder after ADB install/settle.
@@ -175,6 +177,8 @@ diff -u "$OUT/environment/enabled-packages-before.txt" "$OUT/environment/enabled
 "${ADB[@]}" logcat -d -v threadtime > "$OUT/logs/logcat.txt"
 "${ADB[@]}" shell settings get secure enabled_accessibility_services > "$OUT/environment/accessibility-after.txt"
 "${ADB[@]}" shell cmd package resolve-activity -a android.intent.action.MAIN -c android.intent.category.HOME > "$OUT/environment/home-after.txt" || true
+grep -Ei "Displayed com.rampey.materialtv|Fully drawn com.rampey.materialtv|Fatal signal|SIGSEGV|crash_dump|tombstone" "$OUT/logs/logcat.txt" > "$OUT/timeline/displayed-and-crash-events.txt" || true
+printf "displayed_event_source=logcat_observational_not_independent_first_frame\nfully_drawn_source=logcat_if_emitted_not_guaranteed\n" >> "$OUT/manifest.txt"
 echo "Raw evidence: $OUT"
 python3 "$(dirname "$0")/summarize.py" "$OUT"
 echo "Review metadata provenance and redact logs before sharing. Do not call emulator data hardware evidence."
